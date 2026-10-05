@@ -9542,12 +9542,15 @@ public class Main {
                 .expect("a terminal build verdict must include its evidence");
             assert_eq!(report.marker_scope, JavaBuildMarkerScope::Workspace);
             assert!(!report.builder_failed_earlier);
-            assert_eq!(report.recovery, JavaBuildRecovery::None);
+            assert_eq!(report.recovery, JavaBuildRecovery::RebuildJavaIndex);
             let serialized = serde_json::to_value(error).expect("runtime error should serialize");
             assert_eq!(serialized["javaBuildReport"]["markerScope"], "workspace");
             assert_eq!(serialized["javaBuildReport"]["builderFailedEarlier"], false);
             assert!(serialized["javaBuildReport"]["elapsedMilliseconds"].is_u64());
-            assert_eq!(serialized["javaBuildReport"]["recovery"], "none");
+            assert_eq!(
+                serialized["javaBuildReport"]["recovery"],
+                "rebuildJavaIndex"
+            );
         }
         let builds_written = harness
             .server

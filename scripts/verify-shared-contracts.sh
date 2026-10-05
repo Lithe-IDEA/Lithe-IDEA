@@ -35,7 +35,7 @@ windows_lithe_theme="windows/tauri/src/extensions/themes/builtin/lithe.json"
   expected_fields = %w[builderFailedEarlier elapsedMilliseconds markerScope recovery]
   abort "Java build report fields differ from v1" unless reports.all? { |report| report.keys.sort == expected_fields }
   abort "Java build report fixture must cover both marker scopes" unless reports.map { |report| report.fetch("markerScope") }.sort == %w[launchTarget workspace]
-  abort "Java build report fixture must cover index recovery" unless reports.any? { |report| report.fetch("recovery") == "rebuildJavaIndex" }
+  abort "Java build report fixture must give every code verdict the index rebuild" unless reports.all? { |report| report.fetch("recovery") == "rebuildJavaIndex" }
   non_continuable = fixture.fetch("nonContinuableCodes")
   abort "Java build report fixture must keep cancellation and timeout non-continuable" unless %w[javaBuildCancelled requestCancelled requestTimeout].all? { |code| non_continuable.include?(code) }
 ' "$java_build_report_fixture"

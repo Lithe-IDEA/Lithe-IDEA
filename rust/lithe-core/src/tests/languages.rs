@@ -1671,11 +1671,6 @@ fn generated_maven_settings_discard_child_elements_of_the_replaced_repository() 
 }
 
 /// The generated-source extraction identifies a plugin by `groupId:artifactId`
-/// as well: an explicit `org.apache.maven.plugins` compiler contributes its
-/// directories, while a same-named plugin under another group and one whose
-/// group is still an expression contribute nothing.
-#[test]
-/// The generated-source extraction identifies a plugin by `groupId:artifactId`
 /// as well: explicit official coordinates of the compiler and build-helper
 /// plugins contribute their directories, while same-named plugins under another
 /// group and ones whose group is still an expression contribute nothing.
@@ -1766,14 +1761,15 @@ fn maven_scan_requires_the_official_coordinate_for_source_root_plugins() {
 }
 
 /// Reports are read from the directories of plugins identified by
-/// `groupId:artifactId`: the official Surefire/Failsafe coordinates contribute
-/// their custom `reportsDirectory`, a same-named plugin under another group does
-/// not, so its reports stay unread.
+/// `groupId:artifactId`: each official Surefire/Failsafe coordinate contributes
+/// its own custom `reportsDirectory`, while a same-named plugin under another
+/// group contributes nothing, so its reports stay unread.
 #[test]
 fn maven_test_results_require_the_official_coordinate_for_report_plugins() {
     let root = temporary_root("maven-test-report-coordinates");
     for module in ["official-report", "custom-report"] {
-        fs::create_dir_all(root.join(module).join("build/reports")).unwrap();
+        fs::create_dir_all(root.join(module).join("build/surefire-dir")).unwrap();
+        fs::create_dir_all(root.join(module).join("build/failsafe-dir")).unwrap();
     }
     fs::write(
         root.join("pom.xml"),
@@ -1786,7 +1782,7 @@ fn maven_test_results_require_the_official_coordinate_for_report_plugins() {
     ] {
         fs::write(
             root.join(module).join("pom.xml"),
-            format!("<project><artifactId>{module}</artifactId><build><directory>build</directory><plugins><plugin><groupId>{group}</groupId><artifactId>maven-surefire-plugin</artifactId><configuration><reportsDirectory>${{project.build.directory}}/reports</reportsDirectory></configuration></plugin><plugin><groupId>{group}</groupId><artifactId>maven-failsafe-plugin</artifactId><configuration><reportsDirectory>${{project.build.directory}}/reports</reportsDirectory></configuration></plugin></plugins></build></project>"),
+            format!("<project><artifactId>{module}</artifactId><build><directory>build</directory><plugins><plugin><groupId>{group}</groupId><artifactId>maven-surefire-plugin</artifactId><configuration><reportsDirectory>${{project.build.directory}}/surefire-dir</reportsDirectory></configuration></plugin><plugin><groupId>{group}</groupId><artifactId>maven-failsafe-plugin</artifactId><configuration><reportsDirectory>${{project.build.directory}}/failsafe-dir</reportsDirectory></configuration></plugin></plugins></build></project>"),
         )
         .unwrap();
     }
@@ -1800,12 +1796,19 @@ fn maven_test_results_require_the_official_coordinate_for_report_plugins() {
             .expect("report timestamp");
     };
     for (module, class_name) in [
-        ("official-report", "demo.OfficialTest"),
-        ("custom-report", "demo.CustomTest"),
+        ("official-report", "demo.OfficialSurefireTest"),
+        ("official-report", "demo.OfficialFailsafeTest"),
+        ("custom-report", "demo.CustomSurefireTest"),
+        ("custom-report", "demo.CustomFailsafeTest"),
     ] {
+        let directory = if class_name.contains("Failsafe") {
+            "failsafe-dir"
+        } else {
+            "surefire-dir"
+        };
         let report = root
             .join(module)
-            .join(format!("build/reports/TEST-{class_name}.xml"));
+            .join(format!("build/{directory}/TEST-{class_name}.xml"));
         fs::write(
             &report,
             format!("<testsuite name=\"{class_name}\"><testcase name=\"creates\" classname=\"{class_name}\"/></testsuite>"),
@@ -1814,37 +1817,58 @@ fn maven_test_results_require_the_official_coordinate_for_report_plugins() {
         set_modified(&report, 1_700_000_010);
     }
 
-    for (module, class_name, expected) in [
-        (
-            "official-report",
-            "demo.OfficialTest",
-            serde_json::json!([{ "className": "demo.OfficialTest", "method": "creates", "status": "passed", "message": null, "invocations": 1 }]),
-        ),
-        ("custom-report", "demo.CustomTest", serde_json::json!([])),
-    ] {
-        let response: Value = serde_json::from_str(&execute_json(
-            &serde_json::json!({
-                "id": "maven-test-report-coordinates",
-                "command": "maven.testResults",
-                "payload": {
-                    "root": root,
-                    "output": "",
-                    "reports": {
-                        "module": module,
-                        "classes": [class_name],
-                        "notBeforeMillis": 1_700_000_000_000_u64
-                    }
+    // The official pair contributes both custom directories, so both reports
+    // are read; the same-named plugins under the custom group contribute none.
+    let response: Value = serde_json::from_str(&execute_json(
+        &serde_json::json!({
+            "id": "maven-test-report-coordinates",
+            "command": "maven.testResults",
+            "payload": {
+                "root": root,
+                "output": "",
+                "reports": {
+                    "module": "official-report",
+                    "classes": ["demo.OfficialSurefireTest", "demo.OfficialFailsafeTest"],
+                    "notBeforeMillis": 1_700_000_000_000_u64
                 }
-            })
-            .to_string(),
-        ))
-        .expect("report response should be JSON");
-        assert_eq!(response["ok"], true, "{response}");
-        assert_eq!(
-            response["data"]["testCases"], expected,
-            "{module}: {response}"
+            }
+        })
+        .to_string(),
+    ))
+    .expect("report response should be JSON");
+    assert_eq!(response["ok"], true, "{response}");
+    let cases = response["data"]["testCases"].as_array().unwrap();
+    assert_eq!(cases.len(), 2, "{response}");
+    for class_name in ["demo.OfficialSurefireTest", "demo.OfficialFailsafeTest"] {
+        assert!(
+            cases.iter().any(|value| value["className"] == class_name),
+            "{class_name} missing: {response}"
         );
     }
+
+    let negative: Value = serde_json::from_str(&execute_json(
+        &serde_json::json!({
+            "id": "maven-test-report-coordinates",
+            "command": "maven.testResults",
+            "payload": {
+                "root": root,
+                "output": "",
+                "reports": {
+                    "module": "custom-report",
+                    "classes": ["demo.CustomSurefireTest", "demo.CustomFailsafeTest"],
+                    "notBeforeMillis": 1_700_000_000_000_u64
+                }
+            }
+        })
+        .to_string(),
+    ))
+    .expect("report response should be JSON");
+    assert_eq!(negative["ok"], true, "{negative}");
+    assert_eq!(
+        negative["data"]["testCases"],
+        serde_json::json!([]),
+        "{negative}"
+    );
 
     fs::remove_dir_all(root).unwrap();
 }

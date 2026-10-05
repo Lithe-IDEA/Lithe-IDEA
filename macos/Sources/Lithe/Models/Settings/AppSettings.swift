@@ -238,6 +238,7 @@ final class AppSettings: ObservableObject {
            let saved = try? JSONDecoder().decode([String: JavaBuildFailurePolicy].self, from: data) {
             javaBuildFailurePolicies = saved
         }
+        repairImportedAgentProviders()
         AppThemeRuntime.shared.activate(colorTheme)
         updateGitExecutionPreferences()
     }
@@ -408,6 +409,36 @@ final class AppSettings: ObservableObject {
         agentConfigurations[agentID] = AgentConfiguration(name: name, providerID: providerID)
     }
 
+    /// Repair imports made with the old, non-interpolated shared identifier.
+    private func repairImportedAgentProviders() {
+        var value = commitMessageAI
+        for index in value.providers.indices {
+            guard value.providers[index].apiKeyIdentifier == "lithe.(snapshot.source.rawValue).imported.apiKey",
+                  let source = value.providers[index].credentialSource.configurationSource else { continue }
+            value.providers[index].apiKeyIdentifier = "lithe.\(source.rawValue).imported.apiKey"
+        }
+        if value != commitMessageAI { commitMessageAI = value }
+
+        // A prior refresh may already have repaired the identifier while both
+        // agents still point to the last imported source. Do not guess or
+        // recreate the overwritten profile; require an explicit new binding.
+        let sources: [String: AIConfigurationSourceKind] = ["codex-acp": .codex, "claude-acp": .claude]
+        var bindings = agentConfigurations
+        for (agentID, expectedSource) in sources {
+            guard bindings[agentID]?.providerID != nil else { continue }
+            // The collision could also remove the original profile after a
+            // commit-provider refresh had given it a source-specific identifier.
+            guard let provider = agentProvider(for: agentID) else {
+                bindings[agentID]?.providerID = nil
+                continue
+            }
+            guard let actualSource = provider.credentialSource.configurationSource,
+                  actualSource != expectedSource else { continue }
+            bindings[agentID]?.providerID = nil
+        }
+        if bindings != agentConfigurations { agentConfigurations = bindings }
+    }
+
     /// Refresh linked agents' default models without changing the commit provider
     /// selection, endpoints, credentials, or manually configured models.
     func refreshAgentModels(from configurations: [AIConfigurationModel]) {
@@ -487,7 +518,7 @@ final class AppSettings: ObservableObject {
     func importAIConfiguration(
         _ snapshot: AIConfigurationSnapshot
     ) -> AIProviderProfile {
-        let importedKeyIdentifier = "lithe.(snapshot.source.rawValue).imported.apiKey"
+        let importedKeyIdentifier = "lithe.\(snapshot.source.rawValue).imported.apiKey"
         let credentialSource = snapshot.source.credentialSource
         let existing = commitMessageAI.providers.first {
             $0.apiKeyIdentifier == importedKeyIdentifier || $0.credentialSource == credentialSource

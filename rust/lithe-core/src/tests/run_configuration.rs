@@ -2350,6 +2350,51 @@ fn run_configuration_regeneration_keeps_surviving_ids_and_orphans_removed_overri
     fs::remove_dir_all(root).unwrap();
 }
 
+/// A `java.main` configuration whose recorded main class is missing cannot
+/// launch and cannot be rebuilt from local sources, so inspection must report
+/// it as stale -- while a complete entry and a `spring-boot.maven`
+/// compatibility entry (which carries no main class by design) stay silent.
+#[test]
+fn run_configuration_inspection_reports_java_entries_missing_their_main_class() {
+    let root = temporary_root("run-config-stale-java-entry");
+    fs::create_dir_all(root.join(".lithe/run")).unwrap();
+    fs::write(
+        root.join(".lithe/run/generated.json"),
+        r#"{"version":2,"configurations":[
+            {"id":"java-main:demo.App","name":"App","provider":"java.main","execution":"application","toolchains":{"java":"project-jdk"},"extensions":{"maven":{"module":"."},"java":{"source":"src/App.java"}}},
+            {"id":"java-main:demo.Whole","name":"Whole","provider":"java.main","execution":"application","toolchains":{"java":"project-jdk"},"extensions":{"maven":{"module":".","mainClass":"demo.Whole"},"java":{"source":"src/Whole.java"}}},
+            {"id":"spring-boot.maven:legacy","name":"Legacy","provider":"spring-boot.maven","execution":"service","toolchains":{"java":"project-jdk","maven":"project-maven"},"extensions":{"maven":{"module":"."}}}
+        ]}"#,
+    )
+    .unwrap();
+
+    let inspected: Value = serde_json::from_str(&execute_json(
+        &serde_json::json!({
+            "id": "inspect-stale-java-entry",
+            "command": "runConfig.inspect",
+            "payload": {"root": root}
+        })
+        .to_string(),
+    ))
+    .unwrap();
+    assert_eq!(inspected["ok"], true, "{inspected}");
+    let diagnostics = inspected["data"]["diagnostics"].as_array().unwrap();
+    let stale = diagnostics
+        .iter()
+        .filter(|value| value["code"] == "staleJavaEntrypoint")
+        .collect::<Vec<_>>();
+    assert_eq!(stale.len(), 1, "{inspected}");
+    assert!(
+        stale[0]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("(1)"),
+        "{inspected}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn generator_fingerprint_for_revision(inputs: &Value, revision: &str) -> String {
     let inputs = serde_json::from_value::<BTreeMap<String, String>>(inputs.clone()).unwrap();
     let mut digest = Sha256::new();

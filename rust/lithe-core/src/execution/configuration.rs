@@ -480,6 +480,28 @@ pub fn inspect(request: InspectRequest) -> Result<Value, CoreError> {
             }));
         }
     }
+    if let Some(document) = generated.as_ref() {
+        // A Java main entry without a recorded main class cannot launch and
+        // cannot be rebuilt from local sources -- JDT owns entry points -- so
+        // hosts must be told to regenerate while the language service can
+        // answer, instead of letting the stale entry surface as something
+        // else. A `spring-boot.maven` compatibility entry carries no main
+        // class by design and is not stale.
+        let stale = document
+            .configurations
+            .iter()
+            .filter(|configuration| configuration.provider == "java.main")
+            .filter(|configuration| configuration.main_class().is_none())
+            .count();
+        if stale > 0 {
+            diagnostics.push(json!({
+                "code": "staleJavaEntrypoint",
+                "message": format!(
+                    "Java run entries are missing their main class ({stale}); regenerate run configurations"
+                )
+            }));
+        }
+    }
     Ok(json!({
         "status": if generated.is_some() { "ready" } else { "missing" },
         "generated": generated,

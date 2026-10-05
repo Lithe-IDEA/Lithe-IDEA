@@ -134,7 +134,9 @@ export default function RunPane() {
     selectedConfiguration?.id,
   );
   const freshnessDiagnostic = diagnostics.find((diagnostic) =>
-    diagnostic.code === "staleFingerprint" || diagnostic.code === "fingerprintCheckFailed");
+    diagnostic.code === "staleFingerprint" ||
+    diagnostic.code === "fingerprintCheckFailed" ||
+    diagnostic.code === "staleJavaEntrypoint");
   const isSelectedRunning = selection.isRunning;
   const output = selection.output;
   const exitCode = selection.exitCode;

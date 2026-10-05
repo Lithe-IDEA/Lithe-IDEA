@@ -491,7 +491,11 @@ pub fn inspect(request: InspectRequest) -> Result<Value, CoreError> {
             .configurations
             .iter()
             .filter(|configuration| configuration.provider == "java.main")
-            .filter(|configuration| configuration.main_class().is_none())
+            .filter(|configuration| {
+                configuration
+                    .main_class()
+                    .is_none_or(|main_class| main_class.trim().is_empty())
+            })
             .count();
         if stale > 0 {
             diagnostics.push(json!({

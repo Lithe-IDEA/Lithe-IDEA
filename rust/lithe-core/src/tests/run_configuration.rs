@@ -2362,6 +2362,7 @@ fn run_configuration_inspection_reports_java_entries_missing_their_main_class() 
         root.join(".lithe/run/generated.json"),
         r#"{"version":2,"configurations":[
             {"id":"java-main:demo.App","name":"App","provider":"java.main","execution":"application","toolchains":{"java":"project-jdk"},"extensions":{"maven":{"module":"."},"java":{"source":"src/App.java"}}},
+            {"id":"java-main:demo.Blank","name":"Blank","provider":"java.main","execution":"application","toolchains":{"java":"project-jdk"},"extensions":{"maven":{"module":".","mainClass":""},"java":{"source":"src/Blank.java"}}},
             {"id":"java-main:demo.Whole","name":"Whole","provider":"java.main","execution":"application","toolchains":{"java":"project-jdk"},"extensions":{"maven":{"module":".","mainClass":"demo.Whole"},"java":{"source":"src/Whole.java"}}},
             {"id":"spring-boot.maven:legacy","name":"Legacy","provider":"spring-boot.maven","execution":"service","toolchains":{"java":"project-jdk","maven":"project-maven"},"extensions":{"maven":{"module":"."}}}
         ]}"#,
@@ -2388,7 +2389,7 @@ fn run_configuration_inspection_reports_java_entries_missing_their_main_class() 
         stale[0]["message"]
             .as_str()
             .unwrap_or_default()
-            .contains("(1)"),
+            .contains("(2)"),
         "{inspected}"
     );
 

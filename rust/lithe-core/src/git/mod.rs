@@ -505,7 +505,7 @@ pub struct GitWriteRequest {
     pub expected_state: Option<GitHistoryRewriteExpectation>,
 }
 
-/// Isolated Git administration directory used to commit a reviewed snapshot.
+/// Owns an isolated Git administration directory for commits or read-only diffs.
 struct TemporaryGitCommitContext {
     directory: PathBuf,
     index_path: PathBuf,
@@ -519,21 +519,41 @@ impl TemporaryGitCommitContext {
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
             "Git common directory",
         )?;
+        Self::prepare_in(&common_directory, "lithe-commit", head)
+    }
+
+    fn prepare_snapshot(head: Option<&str>) -> Result<Self, CoreError> {
+        // Creating even an ignored child inside .git changes its parent directory
+        // on Windows. A read-only diff must not invalidate the Git watcher that
+        // requested it; keep its disposable index outside repository metadata.
+        Self::prepare_in(&std::env::temp_dir(), "lithe-git-snapshot", head)
+    }
+
+    fn prepare_in(parent: &Path, prefix: &str, head: Option<&str>) -> Result<Self, CoreError> {
         let (directory, sequence) = loop {
             let sequence = TEMPORARY_INDEX_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-            let candidate =
-                common_directory.join(format!("lithe-commit-{}-{sequence}", std::process::id()));
-            if !candidate.exists() {
-                break (candidate, sequence);
+            let candidate = parent.join(format!("{prefix}-{}-{sequence}", std::process::id()));
+            let mut builder = std::fs::DirBuilder::new();
+            builder.recursive(false);
+            // Public POSIX temp roots must not expose tracked paths/object IDs.
+            // Set permissions at atomic creation, before writing HEAD or index.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                builder.mode(0o700);
+            }
+            match builder.create(&candidate) {
+                Ok(()) => break (candidate, sequence),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(CoreError::new(
+                        ErrorCode::Unknown,
+                        "Could not create an isolated Git commit context",
+                    )
+                    .with_details(error.to_string()));
+                }
             }
         };
-        std::fs::create_dir(&directory).map_err(|error| {
-            CoreError::new(
-                ErrorCode::Unknown,
-                "Could not create an isolated Git commit context",
-            )
-            .with_details(error.to_string())
-        })?;
         let temporary_reference = head.is_none().then(|| {
             format!(
                 "refs/lithe/selected-commit-{}-{sequence}",
@@ -548,19 +568,21 @@ impl TemporaryGitCommitContext {
                     .expect("an unborn repository needs a temporary reference")
             )
         });
-        std::fs::write(directory.join("HEAD"), head_contents).map_err(|error| {
+        // Establish ownership before initializing HEAD so errors also remove
+        // the temporary directory through Drop.
+        let context = Self {
+            index_path: directory.join("index"),
+            directory,
+            temporary_reference,
+        };
+        std::fs::write(context.directory.join("HEAD"), head_contents).map_err(|error| {
             CoreError::new(
                 ErrorCode::Unknown,
                 "Could not initialize an isolated Git commit context",
             )
             .with_details(error.to_string())
         })?;
-        let index_path = directory.join("index");
-        Ok(Self {
-            directory,
-            index_path,
-            temporary_reference,
-        })
+        Ok(context)
     }
 
     fn environment(&self, root: &str, common_directory: &Path) -> Vec<(String, String)> {
@@ -1884,7 +1906,7 @@ fn worktree_snapshot_diff(
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
         "Git common directory",
     )?;
-    let temporary_context = TemporaryGitCommitContext::prepare(root, head.as_deref())?;
+    let temporary_context = TemporaryGitCommitContext::prepare_snapshot(head.as_deref())?;
     let environment = temporary_context.environment(root, &common_directory);
     let initialize_arguments = if let Some(head) = head.as_ref() {
         vec!["read-tree".to_string(), head.clone()]
@@ -6839,6 +6861,44 @@ mod tests {
     };
     use serde_json::Value;
     use std::path::PathBuf;
+
+    #[test]
+    fn temporary_git_context_is_private_and_cleans_up_under_a_public_parent() {
+        let parent = super::TemporaryGitCommitContext::prepare_snapshot(Some(&"a".repeat(40)))
+            .expect("owned fixture parent should be created");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&parent.directory, std::fs::Permissions::from_mode(0o755))
+                .expect("fixture parent should allow public traversal");
+        }
+        let context = super::TemporaryGitCommitContext::prepare_in(
+            &parent.directory,
+            "private-index",
+            Some(&"b".repeat(40)),
+        )
+        .expect("private context should be created atomically");
+        let directory = context.directory.clone();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&directory).unwrap().permissions().mode() & 0o077,
+                0
+            );
+        }
+        std::fs::write(&context.index_path, b"tracked/path\0object-id")
+            .expect("index fixture should stay inside the owned context");
+        assert_eq!(
+            std::fs::read(directory.join("HEAD")).unwrap(),
+            format!("{}\n", "b".repeat(40)).as_bytes()
+        );
+        drop(context);
+        assert!(
+            !directory.exists(),
+            "HEAD and index should be removed with their owner"
+        );
+    }
 
     #[test]
     fn simplified_canonical_path_strips_windows_verbatim_prefixes() {

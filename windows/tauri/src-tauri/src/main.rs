@@ -2,6 +2,7 @@
 
 mod ai_commit;
 mod core;
+mod date_time;
 mod debug;
 mod diagnostics;
 mod document;
@@ -117,6 +118,7 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            date_time::format_system_date_time,
             document::read_document_file,
             document::read_document_file_details,
             document::read_document_file_change,

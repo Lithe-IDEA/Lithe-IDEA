@@ -14,11 +14,14 @@
   },
   "windows": {
     "evidence": [
-      "windows/tauri/src/features/git"
+      "windows/tauri/src/features/git",
+      "windows/tauri/src/features/git/components/log/git-reference-tree.tsx",
+      "windows/tauri/src/features/git/components/git-branch-manager.tsx",
+      ".agents/notes/implemented/feature/2026-09-24-windows-git-log-multi-repository-groups.md"
     ],
     "implementationStatus": "implemented",
     "verificationStatus": "pending"
   },
   "owner": "Git",
-  "verification": "在多仓库工作区打开 Git Log：确认按仓库分组、仓库配色、非活动仓库分组只读，点其它仓库的引用会切换活动仓库且只加载一次，Pull 弹窗可选择远程分支与策略。 macOS 在两个分支名不同的仓库间切换时不得查询旧分支；目标历史读取失败也不能保留旧仓库的提交、分页或文件详情。"
+  "verification": "在多仓库工作区打开 Git Log：确认按仓库分组、仓库配色、非活动仓库分组只读，点其它仓库的引用会切换活动仓库且只加载一次，Pull 弹窗可选择远程分支与策略。 Windows 明暗主题中普通本地、远程分支均复用顶部分支按钮的空心 VcsIcon，当前分支勾选、收藏星标、标签与文件夹提示保持可辨认。 macOS 在两个分支名不同的仓库间切换时不得查询旧分支；目标历史读取失败也不能保留旧仓库的提交、分页或文件详情。"
 }

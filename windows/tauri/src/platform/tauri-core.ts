@@ -2,6 +2,7 @@ import { deliverGitExecution, gitExecutionPreferences, type GitExecutionEvent } 
 import {
   Channel,
   convertFileSrc,
+  isTauri,
   invoke as tauriInvoke,
   type InvokeArgs,
   type InvokeOptions,
@@ -13,7 +14,7 @@ import {
 } from "@/config/backend-capabilities";
 import { adaptCoreResult } from "./core-result-adapter";
 
-export { Channel, convertFileSrc };
+export { Channel, convertFileSrc, isTauri };
 
 /**
  * Commands the shared `platform_invoke` dispatcher owns: Git compatibility

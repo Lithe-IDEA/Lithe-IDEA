@@ -14,8 +14,8 @@ describe("default settings", () => {
     expect(getDefaultSettingsSnapshot().autoSave).toBe(true);
   });
 
-  test("shows the editor minimap by default", () => {
-    expect(getDefaultSettingsSnapshot().showMinimap).toBe(true);
+  test("hides the editor minimap by default", () => {
+    expect(getDefaultSettingsSnapshot().showMinimap).toBe(false);
   });
 
   test("starts with IDEA-style hidden file and directory patterns", () => {

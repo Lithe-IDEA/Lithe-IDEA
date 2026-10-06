@@ -47,6 +47,29 @@ test("down arrow remains available at the last difference while a next file exis
   await act(async () => button("Next Difference").click());
   expect(actions).toEqual(["next", "next"]);
 });
+
+test("up arrow can leave the first difference for a previous file and waits during loading", async () => {
+  const actions: string[] = [];
+  const render = async (ready: boolean, index: number) => act(async () => root.render(
+    <LocaleProvider language="en-US">
+      <CommitFileDiffToolbar navigation={commitDifferenceNavigation({ ...emptyDiffNavigation, ready }, index, 3)}
+        fileIndex={index} fileCount={3} viewMode="split" canSplit showWhitespace={false}
+        highlightWords canHighlightWords onHighlightWords={() => {}}
+        onDifference={direction => actions.push(direction)} onFile={() => {}} onSource={() => {}}
+        onViewMode={() => {}} onWhitespace={() => {}} />
+    </LocaleProvider>,
+  ));
+  await render(true, 2);
+  expect(button("Previous Difference").disabled).toBe(false);
+  await act(async () => button("Previous Difference").click());
+  await render(false, 1);
+  expect(button("Previous Difference").disabled).toBe(true);
+  await render(true, 1);
+  await act(async () => button("Previous Difference").click());
+  await render(true, 0);
+  expect(button("Previous Difference").disabled).toBe(true);
+  expect(actions).toEqual(["previous", "previous"]);
+});
 afterEach(async () => {
   try {
     await act(async () => root.unmount());
@@ -151,7 +174,7 @@ test("word highlighting is a pressed toggle and unavailable for binary reviews",
   ));
   const highlight = () => container.querySelector<HTMLButtonElement>('button[aria-pressed]:not([aria-label])')!;
   await render(true, true);
-  expect(highlight().textContent).toBe("Highlight words");
+  expect(highlight().textContent).toBe("Highlight Words");
   expect(highlight().getAttribute("aria-pressed")).toBe("true");
   await act(async () => highlight().click());
   await render(false, true);
@@ -160,6 +183,80 @@ test("word highlighting is a pressed toggle and unavailable for binary reviews",
   expect(highlight().disabled).toBe(true);
   await act(async () => highlight().click());
   expect(actions).toEqual(["highlight"]);
+});
+
+test("display controls precede the rightmost difference status and keep toggle semantics", async () => {
+  const actions: string[] = [];
+  const render = async (showWhitespace: boolean, viewMode: "split" | "unified") => act(async () => root.render(
+    <LocaleProvider language="en-US">
+      <CommitFileDiffToolbar navigation={{ ...emptyDiffNavigation, ready: true, count: 3 }}
+        fileIndex={1} fileCount={5} viewMode={viewMode} canSplit showWhitespace={showWhitespace}
+        highlightWords canHighlightWords onHighlightWords={() => actions.push("words")}
+        onDifference={() => {}} onFile={() => {}} onSource={() => {}}
+        onViewMode={mode => actions.push(mode)} onWhitespace={() => actions.push("whitespace")}
+        onRefresh={() => actions.push("refresh")} />
+    </LocaleProvider>,
+  ));
+  await render(false, "split");
+  const toolbar = container.querySelector('[role="toolbar"]')!;
+  const status = toolbar.querySelector('[role="status"]')!;
+  const controls = toolbar.querySelector(".commit-diff-toolbar-actions")!;
+  expect(toolbar.lastElementChild).toBe(status);
+  expect(controls.contains(status)).toBe(false);
+  expect(controls.contains(button("Unified viewer"))).toBe(true);
+  expect(controls.contains(button("Side-by-side viewer"))).toBe(true);
+  expect(status.textContent).toBe("3 differences");
+  const whitespace = () => [...toolbar.querySelectorAll<HTMLButtonElement>("button")]
+    .find(control => control.textContent === "Show Whitespaces")!;
+  expect(whitespace().getAttribute("aria-pressed")).toBe("false");
+  await act(async () => {
+    whitespace().click();
+    button("Unified viewer").click();
+    button("Side-by-side viewer").click();
+    button("Refresh").click();
+  });
+  expect(actions).toEqual(["whitespace", "unified", "split", "refresh"]);
+  await render(true, "unified");
+  expect(whitespace().getAttribute("aria-pressed")).toBe("true");
+  expect(button("Unified viewer").getAttribute("aria-pressed")).toBe("true");
+  expect(button("Side-by-side viewer").getAttribute("aria-pressed")).toBe("false");
+  expect(status.textContent).toBe("3 differences");
+});
+
+test("difference status uses IDEA singular, plural and inclusion counts without loading or binary claims", async () => {
+  const render = async (count: number, includedCount?: number, ready = true, canHighlightWords = true,
+    fileNavigationBusy = false, language: "en-US" | "zh-CN" = "en-US", differenceCount?: number) => act(async () => root.render(
+    <LocaleProvider language={language}>
+      <CommitFileDiffToolbar navigation={{ ...emptyDiffNavigation, ready, count }}
+        fileIndex={0} fileCount={9} viewMode="split" canSplit showWhitespace={false}
+        fileNavigationBusy={fileNavigationBusy} includedCount={includedCount} differenceCount={differenceCount}
+        highlightWords canHighlightWords={canHighlightWords} onHighlightWords={() => {}}
+        onDifference={() => {}} onFile={() => {}} onSource={() => {}}
+        onViewMode={() => {}} onWhitespace={() => {}} />
+    </LocaleProvider>,
+  ));
+  const status = () => container.querySelector('[role="status"]')!.textContent;
+  for (const [count, expected] of [[0, "No differences"], [1, "1 difference"], [4, "4 differences"]] as const) {
+    await render(count);
+    expect(status()).toBe(expected);
+  }
+  for (const included of [0, 2, 4]) {
+    await render(4, included);
+    expect(status()).toBe(`4 differences, ${included} included`);
+  }
+  await render(1, 1);
+  expect(status()).toBe("1 difference, 1 included");
+  // Unified comparison can merge nearby changes; Commit still counts its visible inclusion blocks.
+  await render(1, 2, true, true, false, "en-US", 4);
+  expect(status()).toBe("4 differences, 2 included");
+  await render(4, 2, false);
+  expect(status()).toBe("");
+  await render(4, 2, true, false);
+  expect(status()).toBe("");
+  await render(4, 2, true, true, true);
+  expect(status()).toBe("");
+  await render(4, 2, true, true, false, "zh-CN");
+  expect(status()).toBe("4 处差异，已包含 2 处");
 });
 
 test("version titles preserve rename paths, exact revision tooltips and empty-tree identity", async () => {

@@ -56,6 +56,7 @@ export const createSingleFileWorkingTreeDiff = ({
   target,
   commitPreview = false,
   workingTreeFileOrder,
+  initialDifference,
 }: {
   repoPath: string;
   fileKey: string;
@@ -65,6 +66,7 @@ export const createSingleFileWorkingTreeDiff = ({
   target?: WorkingTreeDiffTarget;
   commitPreview?: boolean;
   workingTreeFileOrder?: MultiFileDiff["workingTreeFileOrder"];
+  initialDifference?: MultiFileDiff["initialDifference"];
 }): MultiFileDiff => {
   const files = diff ? [diff] : [];
   const stats = countDiffStats(files);
@@ -82,6 +84,7 @@ export const createSingleFileWorkingTreeDiff = ({
     ...(target ? { workingTreeTargets: { [fileKey]: target } } : {}),
     ...(commitPreview ? { commitPreview } : {}),
     ...(workingTreeFileOrder ? { workingTreeFileOrder } : {}),
+    ...(initialDifference ? { initialDifference } : {}),
     isLoading: false,
   };
 };

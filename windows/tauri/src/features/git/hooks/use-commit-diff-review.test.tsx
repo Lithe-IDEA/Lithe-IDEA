@@ -29,8 +29,9 @@ const spies: Array<{ mockRestore(): void }> = [];
 const actGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 let previousAct: boolean | undefined;
 let previousCustomEvent: PropertyDescriptor | undefined;
-function Harness() {
-  review = useCommitDiffReview("review-buffer", fileKey, current.workingTreeTargets?.[fileKey], target);
+function Harness({ followFile = false }: { followFile?: boolean }) {
+  const key = followFile ? current.initiallySelectedFileKey ?? current.initiallyExpandedFileKey ?? fileKey : fileKey;
+  review = useCommitDiffReview("review-buffer", key, current.workingTreeTargets?.[key], target);
   return null;
 }
 beforeEach(() => {
@@ -184,7 +185,10 @@ test("refresh and block inclusion retain file order and next file reads the actu
   } };
   const order = [{ fileKey, target }, next];
   current = { ...current, workingTreeFileOrder: order };
-  await act(async () => { root.render(<LocaleProvider language="en-US"><Harness /></LocaleProvider>); });
+  status.mockImplementation(async () => ({ branch: "main", ahead: 0, behind: 0,
+    files: [{ path: "file.txt", status: "modified", staged: indexed !== head, worktree: true },
+      { path: "next.txt", status: "untracked", staged: false, worktree: true }] }));
+  await act(async () => { root.render(<LocaleProvider language="en-US"><Harness followFile /></LocaleProvider>); });
   await act(async () => { await review.toggle(review.blocks[0].id, true); });
   expect(current.workingTreeFileOrder).toBe(order);
   const read = spyOn(diffApi, "getWorkingTreePathDiff").mockResolvedValue({ ...diff, file_path: "next.txt" });
@@ -196,6 +200,12 @@ test("refresh and block inclusion retain file order and next file reads the actu
   expect(current.workingTreeTargets?.[next.fileKey]).toEqual(next.target);
   expect(current.workingTreeFileOrder).toBe(order);
   expect(current.files).toHaveLength(1);
+  expect(current.initialDifference).toBe("first");
+  await act(async () => { await review.navigateFile(-1); });
+  expect(current.initiallyExpandedFileKey).toBe(fileKey);
+  expect(current.initialDifference).toBe("last");
+  await act(async () => { await review.refresh(); });
+  expect(current.initialDifference).toBe("last");
 });
 
 test("closing Commit while a next-file read is pending cannot replace or reopen the preview", async () => {

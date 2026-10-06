@@ -153,6 +153,8 @@ function CommitFileDiffPage({ multiDiff, index,
         onDifference={(direction) => {
           if (direction === "next" && currentNavigation.ready && !currentNavigation.canNext)
             onFile(1);
+          else if (direction === "previous" && currentNavigation.ready && !currentNavigation.canPrevious)
+            onFile(-1);
           else editor.current?.navigateDifference(direction);
         }}
         onSource={() => editor.current?.jumpToSource()}
@@ -160,7 +162,11 @@ function CommitFileDiffPage({ multiDiff, index,
         onViewMode={setViewMode}
         onRefresh={review ? () => { void review.refresh(); } : undefined}
         refreshing={review?.busy}
-        includedCount={review?.blocks.filter(block => block.checked || block.indeterminate).length}
+        differenceCount={review?.blocks.length ? review.blocks.length : undefined}
+        includedCount={!review?.snapshot ? undefined
+          : review.blocks.length ? review.blocks.filter(block => block.checked || block.indeterminate).length
+          : review.presentation?.indeterminate ? undefined
+          : review.presentation?.included ? currentNavigation.count : 0}
       />
       {diff && (
         <CommitFileDiffVersionHeader diff={diff} revisions={multiDiff.fileRevisions?.[index]}
@@ -189,6 +195,7 @@ function CommitFileDiffPage({ multiDiff, index,
           <IndependentCommitDiff ref={editor} diff={diff} sourceRepoPath={multiDiff.repoPath}
             showWhitespace={showWhitespace} highlightWords={highlightWords}
             startAtFirstDifference={!review || initialDiff.current === diff} onNavigationChange={onNavigationChange}
+            startAtLastDifference={multiDiff.initialDifference === "last"}
             blockControls={blockControls}
             onSplitLayout={onSplitLayout} />
         ) : (
@@ -200,6 +207,7 @@ function CommitFileDiffPage({ multiDiff, index,
             sourceRepoPath={multiDiff.repoPath}
             onNavigationChange={onNavigationChange}
             startAtFirstDifference={!review || initialDiff.current === diff}
+            startAtLastDifference={multiDiff.initialDifference === "last"}
             highlightWords={highlightWords}
             repositoryPreview
             blockControls={blockControls}

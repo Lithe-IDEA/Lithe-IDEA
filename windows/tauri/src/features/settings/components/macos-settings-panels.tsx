@@ -312,6 +312,13 @@ function EditorPanel() {
             size="sm"
           />
         </SettingsRow>
+        <SettingsRow label={t("settings.editor.showMinimap")}>
+          <Switch
+            checked={settings.showMinimap}
+            onChange={(checked) => void updateSetting("showMinimap", checked)}
+            size="sm"
+          />
+        </SettingsRow>
       </SettingsGroup>
       <SettingsGroup title={t("settings.mac.editorTabs")}>
         <SettingsRow label={t("settings.mac.layout")}>

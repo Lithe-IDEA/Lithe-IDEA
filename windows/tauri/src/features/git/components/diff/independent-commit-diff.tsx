@@ -28,6 +28,7 @@ interface Props {
   showWhitespace: boolean;
   highlightWords: boolean;
   startAtFirstDifference: boolean;
+  startAtLastDifference?: boolean;
   blockControls?: CommitDiffBlockControls;
   onNavigationChange: (state: DiffNavigationState) => void;
   onSplitLayout: (width: number) => void;
@@ -69,7 +70,8 @@ export default function IndependentCommitDiff(props: Props) {
     }
     if (pendingFirst.current) {
       pendingFirst.current = false;
-      if (instance.plan.changes.length) instance.reveal(instance.plan.changes[0]);
+      const changes = instance.plan.changes;
+      if (changes.length) instance.reveal(changes[latest.current.startAtLastDifference ? changes.length - 1 : 0]);
     }
     const side = instance.focused,
       view = instance.views[side],

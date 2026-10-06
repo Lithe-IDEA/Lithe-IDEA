@@ -4,7 +4,10 @@ import {
   type LocalChangelists,
 } from "../../utils/git-changelists";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
-import { act } from "react";
+import { act, useState } from "react";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { createPaneContent } from "@/features/editor/stores/buffer-content-factory";
+import { createSingleFileWorkingTreeDiff } from "../../utils/working-tree-multi-diff";
 import { createRoot, type Root } from "react-dom/client";
 import * as virtual from "@tanstack/react-virtual";
 import * as statusApi from "../../api/git-status-api";
@@ -21,6 +24,8 @@ let virtualizer: ReturnType<typeof spyOn<typeof virtual, "useVirtualizer">>;
 const actGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 let previousAct: boolean | undefined;
 let previousGetAnimations: PropertyDescriptor | undefined;
+let previousBuffers: Pick<ReturnType<typeof useBufferStore.getState>, "buffers" | "activeBufferId">;
+let scrollRequests: Array<{ index: number; align?: string }>;
 beforeEach(() => {
   restoreDom = installHappyDom();
   // Base UI measures scroll geometry after animations. This DOM fixture has
@@ -32,6 +37,10 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
+  const bufferState = useBufferStore.getState();
+  previousBuffers = { buffers: bufferState.buffers, activeBufferId: bufferState.activeBufferId };
+  useBufferStore.setState({ buffers: [], activeBufferId: null });
+  scrollRequests = [];
   staging = spyOn(statusApi, "setFilesStaged").mockResolvedValue(true);
   // Expose visible rows without relying on browser layout measurements in happy-dom.
   virtualizer = spyOn(virtual, "useVirtualizer").mockImplementation(((
@@ -40,7 +49,7 @@ beforeEach(() => {
     getVirtualItems: () =>
       Array.from({ length: options.count }, (_, index) => ({ index, size: 32, start: index * 32 })),
     getTotalSize: () => options.count * 32,
-    scrollToIndex: () => {},
+    scrollToIndex: (index: number, options?: { align?: string }) => { scrollRequests.push({ index, ...options }); },
   })) as unknown as typeof virtual.useVirtualizer);
 });
 afterEach(async () => {
@@ -49,6 +58,7 @@ afterEach(async () => {
   } finally {
     staging.mockRestore();
     virtualizer.mockRestore();
+    useBufferStore.setState(previousBuffers);
     container.remove();
     if (previousGetAnimations) {
       Object.defineProperty(HTMLElement.prototype, "getAnimations", previousGetAnimations);
@@ -84,6 +94,68 @@ const file = (repository: string, name = "hello.ts"): GitFile => ({
   status: "modified",
   staged: false,
   canToggleStaging: true,
+});
+
+const preview = async (file: GitFile, options: { history?: boolean; loading?: boolean } = {}) => {
+  const target = { repoPath: file.repositoryPath!, filePath: file.repositoryRelativePath!, untracked: false };
+  const data = createSingleFileWorkingTreeDiff({ repoPath: target.repoPath, target,
+    fileKey: `unstaged:${file.path}`, diff: null, commitPreview: true });
+  await act(async () => useBufferStore.setState({ activeBufferId: "commit-preview", buffers: [
+    createPaneContent("commit-preview", { type: "diff", path: "diff://preview", name: "Commit",
+      content: "", diffData: { ...data, commitHash: options.history ? "revision" : "working-tree",
+        isLoading: options.loading ?? false } }),
+  ] }));
+};
+const selectedNames = () => [...container.querySelectorAll('[role="treeitem"][aria-selected="true"]')]
+  .map(row => row.textContent);
+
+test("Commit selection and virtual scrolling follow both directions without changing inclusion or stealing focus", async () => {
+  const first = file("A", "a.ts"), next = file("B", "b.ts");
+  await render([first, next]);
+  const editor = document.createElement("textarea");
+  container.append(editor);
+  editor.focus();
+  await preview(first);
+  expect(selectedNames()).toHaveLength(1);
+  expect(selectedNames()[0]).toContain("a.ts");
+  await preview(next);
+  expect(selectedNames()).toHaveLength(1);
+  expect(selectedNames()[0]).toContain("b.ts");
+  const row = container.querySelector('[aria-label="Include b.ts in commit"]')!.closest('[data-git-status-row-index]')!;
+  expect(scrollRequests[scrollRequests.length - 1]).toEqual({ index: Number(row.getAttribute("data-git-status-row-index")), align: "auto" });
+  const scrollCount = scrollRequests.length;
+  // Refreshing the same comparison must not repeatedly pull the list back into view.
+  await preview(next);
+  expect(scrollRequests).toHaveLength(scrollCount);
+  await preview(first);
+  expect(selectedNames()[0]).toContain("a.ts");
+  expect(document.activeElement).toBe(editor);
+  expect(staging).not.toHaveBeenCalled();
+});
+
+test("preview selection reveals collapsed repository, section and compact folders, ignoring foreign history and loading", async () => {
+  const selected = file("B", "b.ts"), other = file("A", "a.ts");
+  const section = "C:/workspace/B:default:tracked";
+  function Harness() {
+    const [collapsedSections, setSections] = useState(new Set(["repository:C:/workspace/B", section]));
+    const [collapsedFolders, setFolders] = useState(new Set([`${section}:src`]));
+    return <GitStatusPanel files={[other, selected]} repositoryCount={2} repoPath="C:/workspace/A"
+      collapsedSections={collapsedSections} onCollapsedSectionsChange={setSections}
+      collapsedFolders={collapsedFolders} onCollapsedFoldersChange={setFolders}
+      onStagingRefresh={async () => {}} />;
+  }
+  await act(async () => root.render(<LocaleProvider language="en-US"><Harness /></LocaleProvider>));
+  await preview(selected, { history: true });
+  expect(selectedNames()).toHaveLength(0);
+  await preview(selected, { loading: true });
+  expect(selectedNames()).toHaveLength(0);
+  await preview({ ...selected, repositoryPath: "C:/foreign" });
+  expect(selectedNames()).toHaveLength(0);
+  await preview(selected);
+  expect(selectedNames()).toHaveLength(1);
+  expect(selectedNames()[0]).toContain("b.ts");
+  expect(scrollRequests[scrollRequests.length - 1]?.align).toBe("auto");
+  expect(staging).not.toHaveBeenCalled();
 });
 
 test("file checkboxes stage in their owner repository, independently of the active root", async () => {

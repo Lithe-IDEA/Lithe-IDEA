@@ -19,6 +19,8 @@ import {
   TrashIcon as Trash2,
 } from "@/ui/icons";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useBufferStore } from "@/features/editor/stores/buffer.store";
+import { getBufferById } from "@/features/editor/utils/buffer-index";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -273,6 +275,17 @@ const GitStatusPanel = ({
     return () => onStagingPendingChange?.(false);
   }, [stagePendingPaths, onStagingPendingChange]);
   const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
+  const activeCommitFile = useBufferStore((state) => {
+    const buffer = getBufferById(state.buffers, state.activeBufferId);
+    const data = buffer?.type === "diff" ? buffer.diffData : undefined;
+    if (!data || !("files" in data) || !data.commitPreview || data.commitHash !== "working-tree"
+      || data.isLoading) return null;
+    const key = data.initiallySelectedFileKey ?? data.initiallyExpandedFileKey;
+    const target = key ? data.workingTreeTargets?.[key] : undefined;
+    return target ? `${target.repoPath}\0${target.filePath}` : null;
+  });
+  const synchronizedCommitFile = useRef<string | null>(null);
+  const pendingCommitReveal = useRef<string | null>(null);
 
   const [stashModal, setStashModal] = useState<{
     isOpen: boolean;
@@ -509,6 +522,49 @@ const GitStatusPanel = ({
     getItemKey: (index) => statusRows[index]?.key ?? index,
     overscan: GIT_STATUS_TREE_OVERSCAN,
   });
+
+  useEffect(() => {
+    if (!activeCommitFile) {
+      synchronizedCommitFile.current = null;
+      pendingCommitReveal.current = null;
+      return;
+    }
+    if (synchronizedCommitFile.current === activeCommitFile) return;
+    const file = visibleFiles.find(file =>
+      `${getGitFileRepositoryPath(file, repoPath)}\0${getGitFileRepositoryRelativePath(file)}` === activeCommitFile);
+    const section = file && sections.find(section => section.files.some(entry => entry.path === file.path));
+    if (!file || !section) {
+      synchronizedCommitFile.current = null;
+      pendingCommitReveal.current = null;
+      return;
+    }
+    synchronizedCommitFile.current = activeCommitFile;
+    pendingCommitReveal.current = file.path;
+    const id = getFileEntryId(file.path);
+    // IDEA keeps an existing multi-selection when it already contains the previewed file.
+    setSelectedEntryIds(current => current.has(id) ? current : new Set([id]));
+    const nextSections = new Set(collapsedSections);
+    nextSections.delete(`repository:${section.repoPath}`);
+    nextSections.delete(section.id);
+    if (nextSections.size !== collapsedSections.size) onCollapsedSectionsChange(nextSections);
+    const nextFolders = new Set(collapsedFolders);
+    for (const [id, folder] of section.tree?.folderStateById ?? []) {
+      if (folder.descendantFilePaths.includes(file.path)) {
+        nextFolders.delete(`${section.id}:${id.slice("branch:".length)}`);
+      }
+    }
+    if (nextFolders.size !== collapsedFolders.size) onCollapsedFoldersChange(nextFolders);
+  }, [activeCommitFile, visibleFiles, sections, repoPath, collapsedSections, collapsedFolders,
+    onCollapsedSectionsChange, onCollapsedFoldersChange]);
+
+  useEffect(() => {
+    const path = pendingCommitReveal.current;
+    if (!path) return;
+    const index = statusRows.findIndex(row => row.kind === "file" && row.file.path === path);
+    if (index < 0) return; // Wait for collapsed ancestors to expand before scrolling the virtual tree.
+    statusVirtualizer.scrollToIndex(index, { align: "auto" });
+    pendingCommitReveal.current = null;
+  }, [activeCommitFile, statusRows, statusVirtualizer]);
 
   useEffect(() => {
     setSelectedEntryIds((current) => {

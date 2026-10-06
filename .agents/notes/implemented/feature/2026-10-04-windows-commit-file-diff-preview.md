@@ -7,12 +7,14 @@
 Windows 的 Commit Files 点击文件后使用独立页面，一次显示一个文件的差异。
 页面保留当前比较的完整文件集合，左右箭头切换文件，上下箭头导航差异；
 到当前文件最后一处后继续按下箭头，会进入下一文件的第一处差异。
+到当前文件第一处后继续按上箭头，会进入上一文件的最后一处差异；跨文件后 Commit 列表同步选中并显示对应行。
 标签跟随当前文件，采用 IDEA 的 `Repository Diff: 文件名`，提交标识显示在页面内。
 源文件跳转必须使用预览所属仓库，不能因为活动项目不同而打开同名的另一份文件。
 并排文本预览把两侧行号集中在中间，并显示差异连接带和各侧差异标记。
 并排页面保留独立行流，连接带跟随两侧实际滚动位置变化并绘制在行号背景中。
 Git 提供增删脚本，Monaco 只负责只读代码控件；通常的统一视图使用原 Diff 组件，整文件新增只显示新增行流。
 Commit 面板点击文件也使用同一页面，增加块级包含复选框、回退双箭头与刷新；包含状态直接来自 Git 暂存区。
+两处工具栏的词级高亮、空白符和视图切换位于左侧，最右侧显示当前文件的差异数；Commit 还显示已包含块数。
 
 ## 问题
 
@@ -22,11 +24,37 @@ Commit 面板点击文件也使用同一页面，增加块级包含复选框、�
 
 ## 决策
 
+单文件工具栏的显示选项与文件导航放在同一左侧操作区，弹性空白之后只显示差异统计。
+窄窗口只让左侧操作区横向滚动，统计保留在右侧独立区域，不能随按钮一起滚出视口。
+Git Log 的差异数来自当前编辑器已完成的比较；Commit 有可包含块时，总数与 included 使用同一组 Git 连续增删块，
+避免统一视图合并比较结果后出现 included 大于差异总数。不使用文件总数、增删行数或 Git hunk 数；
+加载、切换文件和图片/二进制预览时不显示虚假的“无差异”。Commit 的已包含数沿用暂存区块状态，
+部分包含块也计入；勾选及刷新后统计随块状态更新。按本次用户要求，全部包含时仍显示 included 数量。
+没有可安全分块的数据时，完全包含文件按全部差异已包含计数；部分包含但无法确定块数时不编造 included 数量。
+参考 Community `fb72b4df43aba102479eb0502d20b03586b9c5b8` 的
+`platform/diff-api/resources/messages/DiffBundle.properties`、
+`platform/platform-resources-en/src/messages/ActionsBundle.properties` 和
+`platform/vcs-impl/src/com/intellij/openapi/vcs/changes/actions/diff/lst/LocalTrackerDiffUtil.kt`：
+英文使用 `Highlight Words`、`Show Whitespaces`、`Unified viewer`、`Side-by-side viewer`，
+差异状态区分 `No differences`、`1 difference` 和 `N differences`，Commit 追加 `, N included`。
+空白符开关保持同一操作名，通过选中状态表示开关；词级关闭仍保留整行底色，不新增高亮策略。
+
 Git 模块负责保存比较快照（一次读取所得的全部补丁和提交身份），
 `commitFilePreview` 只区分前端页面，不改变共享 Core 的 Git 协议。
 `CommitFileDiffPreview` 按文件 key 显示单个条目，导航只修改缓冲区里的当前 key。
 例如 `C:a.ts` 和 `A:a.ts` 是两个可分别导航到的版本，不要按 `a.ts` 去重。
 完整提交、普通工作区和其他多个文件的比较继续使用已有页面；Commit 单文件入口由独立工作区所有者接入同一呈现。
+
+上下差异导航在当前文件边界双向继续，不循环；比较未准备好时两种跨文件入口都禁用。
+向前进入首个差异，向后进入最后一个差异；并排与统一控件在比较完成后只消费一次定位请求，普通刷新保留当前位置。
+Commit 文件列表观察当前工作区活动预览的仓库及相对路径，更新对应行的选择并展开其仓库、分组和祖先文件夹，
+随后用已有虚拟列表滚动到该行。不要模拟点击文件行重新打开 Diff，也不要移动编辑器焦点或改变 include 状态。
+同一文件的状态刷新不重新滚动；历史 Diff、加载中快照和不属于列表的仓库不更新列表选择。
+参考 Community `fb72b4df43aba102479eb0502d20b03586b9c5b8` 的
+`platform/vcs-impl/src/com/intellij/openapi/vcs/changes/ChangeViewDiffRequestProcessor.java` 与
+`platform/vcs-impl/src/com/intellij/openapi/vcs/changes/ui/TreeHandlerDiffRequestProcessor.kt`：
+跨文件移动更新变更树的选择，已有多选包含目标文件时保留多选；树按实际变更身份定位节点。
+文件加载成功并通过原有活动缓冲区、请求代次和顺序校验后才发布新预览，因此失败、关闭或迟到请求不能移动文件列表选择。
 
 Commit 的工作区所有者 `useCommitDiffReview` / `createCommitDiffReview` 读取 HEAD 到磁盘和 HEAD 到暂存区的完整补丁。
 例如同一个三行上下文 hunk 中有两处修改，勾选第二处只将第二处写入暂存区；不能把 hunk 的上下文范围当作提交块。

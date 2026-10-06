@@ -16,7 +16,8 @@ export function moveCommitFile(data: MultiFileDiff, direction: -1 | 1): MultiFil
   const target = index + direction;
   if (index < 0 || target < 0 || target >= data.files.length) return null;
   const key = getMultiDiffSectionKey(data, data.files[target], target);
-  return { ...data, initiallySelectedFileKey: key, initiallyExpandedFileKey: key };
+  return { ...data, initiallySelectedFileKey: key, initiallyExpandedFileKey: key,
+    initialDifference: direction === -1 ? "last" : "first" };
 }
 
 export interface DiffNavigationState {
@@ -35,7 +36,7 @@ export const emptyDiffNavigation: DiffNavigationState = {
   canJumpToSource: false,
 };
 
-/** Continue forward through the snapshot only after the current comparison is ready. */
+/** Continue through either snapshot boundary only after the current comparison is ready. */
 export function commitDifferenceNavigation(
   navigation: DiffNavigationState,
   fileIndex: number,
@@ -43,6 +44,8 @@ export function commitDifferenceNavigation(
 ): DiffNavigationState {
   return {
     ...navigation,
+    canPrevious: navigation.ready &&
+      (navigation.canPrevious || (fileIndex > 0 && fileIndex < fileCount)),
     canNext: navigation.ready &&
       (navigation.canNext || (fileIndex >= 0 && fileIndex < fileCount - 1)),
   };

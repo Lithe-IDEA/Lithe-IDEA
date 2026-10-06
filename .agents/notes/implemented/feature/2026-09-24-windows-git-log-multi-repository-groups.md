@@ -34,6 +34,18 @@ Windows Git Log 只显示单个活动仓库的分支：
 
 ## 决策
 
+### 本地与远程分支复用同一个图标
+
+普通本地、远程分支都使用顶部分支按钮已有的 `VcsIcon`（含明暗主题资源），
+分支所属位置由 Local / Remote 和远程名称分组表达，不再给远程分支使用网络节点图标。
+依据是 IntelliJ Community 版本 `fb72b4df43ab` 的
+`plugins/git4idea/shared/src/com/intellij/vcs/git/ui/GitBranchesTreeIconProvider.kt`：
+Git Log 的 `BranchesTree.kt` 与分支菜单共用该提供器，普通分支都走 `AllIcons.Vcs.BranchNode`。
+具体图形按用户指定的顶部分支按钮复用：IDEA 的
+`plugins/git4idea/frontend/src/com/intellij/vcs/git/frontend/widget/GitToolbarWidgetAction.kt`
+使用 `AllIcons.General.Vcs`，Lithe 已映射到 `expui/general/vcs.svg` 与 `_dark.svg`。
+不要替换成下拉列表中的实心 `GitBranchIcon`；当前分支勾选、收藏星标、标签和分组文件夹继续表达各自状态。
+
 ### 仓库维度的分组放在前端，不下沉到 Core
 
 Core 的 `git.references` / `git.historyPage` 保持单仓库入参（`root`）。多仓库聚合由
@@ -114,6 +126,8 @@ pending 引用 ref，在 `repoPath` 变化后的 effect 里调用 `selectReferen
 
 ## 验证
 
+- 在 Windows Git Log 的 Local / Remote 中对比普通分支，确认与顶部分支按钮使用相同空心图标，
+  明暗主题均正常；当前分支、收藏、标签及文件夹状态提示保持可辨认。
 - Windows 前端：`tsc --noEmit`；`bun test src/features/git`，含
   `git-reference-tree.test.tsx`（单仓库保持扁平、多仓库按仓库分组）、
   `git-reference-tree-lazy-references.test.tsx`（可见的展开分组触发加载、折叠分组

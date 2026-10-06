@@ -113,7 +113,8 @@ export function useCommitDiffReview(bufferId: string | null, fileKey: string,
         const diff = commitDiffPresentation(snapshot, stagedView).diff;
         const updated = createSingleFileWorkingTreeDiff({ repoPath, fileKey, target: nextTarget,
           diff,
-          title: data.title, commitPreview: true, workingTreeFileOrder: data.workingTreeFileOrder });
+          title: data.title, commitPreview: true, workingTreeFileOrder: data.workingTreeFileOrder,
+          initialDifference: data.initialDifference });
         if (!equal(data.files, updated.files) || !equal(data.workingTreeTargets, updated.workingTreeTargets)) {
           useBufferStore.getState().actions.updateBufferContent(bufferId, "", false, updated);
         }
@@ -167,7 +168,7 @@ export function useCommitDiffReview(bufferId: string | null, fileKey: string,
       if (!diff) throw new Error("Git diff unavailable");
       const updated = createSingleFileWorkingTreeDiff({ repoPath: target.repoPath,
         fileKey: next.fileKey, target, diff, title: latest.title, commitPreview: true,
-        workingTreeFileOrder: order });
+        workingTreeFileOrder: order, initialDifference: direction === -1 ? "last" : "first" });
       useBufferStore.getState().actions.updateBufferContent(bufferId, "", false, updated);
     } catch {
       if (current()) setState(previous => ({ ...previous, error: "read" }));

@@ -50,6 +50,7 @@ interface Props {
   sourceRepoPath?: string;
   onNavigationChange?: (state: DiffNavigationState) => void;
   startAtFirstDifference?: boolean;
+  startAtLastDifference?: boolean;
   highlightWords?: boolean;
   repositoryPreview?: boolean;
   onSplitLayout?: (originalWidth: number) => void;
@@ -71,6 +72,7 @@ export default function MonacoGitDiff({
   sourceRepoPath,
   onNavigationChange,
   startAtFirstDifference = false,
+  startAtLastDifference = false,
   highlightWords = true,
   repositoryPreview = false,
   onSplitLayout,
@@ -104,6 +106,8 @@ export default function MonacoGitDiff({
   const latest = useRef({ rows, sourcePath, sourceRepoPath, isDeleted: diff.is_deleted });
   const updating = useRef(false);
   const firstDifferencePending = useRef(startAtFirstDifference);
+  const lastDifferenceLanding = useRef(startAtLastDifference);
+  lastDifferenceLanding.current = startAtLastDifference;
   const landingDiff = useRef(diff);
   const navigationListener = useRef(onNavigationChange);
   navigationListener.current = onNavigationChange;
@@ -197,7 +201,8 @@ export default function MonacoGitDiff({
           // Consume once after Monaco finishes; later cursor/model updates keep their position.
           firstDifferencePending.current = false;
           if (changes.length) {
-            const lineNumber = differenceStartLine(changes[0], editors[1].getModel()?.getLineCount() ?? 1);
+            const change = changes[lastDifferenceLanding.current ? changes.length - 1 : 0];
+            const lineNumber = differenceStartLine(change, editors[1].getModel()?.getLineCount() ?? 1);
             editors[1].setPosition({ lineNumber, column: 1 });
             editors[1].revealPositionInCenter({ lineNumber, column: 1 });
             editors[1].focus();

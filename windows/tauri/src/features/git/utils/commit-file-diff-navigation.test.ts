@@ -56,7 +56,9 @@ test("file navigation preserves repeated revisions, updates the tab and stops at
   const last = moveCommitFile(middle, 1)!;
   expect(selectedCommitFileIndex(middle)).toBe(1);
   expect(first.initiallySelectedFileKey).toBe("C:a");
+  expect(first.initialDifference).toBe("last");
   expect(last.initiallySelectedFileKey).toBe("A:a");
+  expect(last.initialDifference).toBe("first");
   expect(last.files).toBe(middle.files);
   expect(last.fileLabels?.[selectedCommitFileIndex(last)]).toBe("A");
   expect(last.repoPath).toBe("C:/nested/repo");
@@ -156,4 +158,14 @@ test("next difference continues at file boundaries but waits for each comparison
   expect(commitDifferenceNavigation(ready, 1, 3).canNext).toBe(true);
   expect(commitDifferenceNavigation(ready, 2, 3).canNext).toBe(false);
   expect(commitDifferenceNavigation(ready, -1, 0).canNext).toBe(false);
+});
+
+test("previous difference crosses file boundaries only when ready and stops at the snapshot start", () => {
+  const ready = { ...emptyDiffNavigation, ready: true };
+  expect(commitDifferenceNavigation(ready, 0, 3).canPrevious).toBe(false);
+  expect(commitDifferenceNavigation(ready, 1, 3).canPrevious).toBe(true);
+  expect(commitDifferenceNavigation(ready, 2, 3).canPrevious).toBe(true);
+  expect(commitDifferenceNavigation(emptyDiffNavigation, 2, 3).canPrevious).toBe(false);
+  expect(commitDifferenceNavigation(ready, -1, 0).canPrevious).toBe(false);
+  expect(commitDifferenceNavigation({ ...ready, canPrevious: true }, 0, 3).canPrevious).toBe(true);
 });

@@ -143,6 +143,8 @@ export interface MultiFileDiff {
   fileRevisions?: DiffRevisionPair[];
   initiallyExpandedFileKey?: string;
   initiallySelectedFileKey?: string;
+  /** Backward file navigation lands at the last change after the comparison is ready. */
+  initialDifference?: "first" | "last";
   /** Hides the changed-files navigator, e.g. for a single-file commit preview. */
   hideFileList?: boolean;
   /** Git Log preview: one visible file, with the complete comparison retained for navigation. */

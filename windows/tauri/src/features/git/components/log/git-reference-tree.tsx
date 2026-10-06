@@ -20,6 +20,7 @@ import {
   TrashIcon,
   TreeStructureIcon,
   UploadIcon,
+  VcsIcon,
 } from "@/ui/icons";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -88,8 +89,7 @@ function ReferenceIcon({
   if (isCurrent) return <CheckIcon className="size-3.5 text-amber-400" />;
   if (isMarked) return <StarIcon className="size-3.5 fill-amber-400 text-amber-400" />;
   if (kind === "tag") return <TagIcon className="size-3.5 text-amber-400" />;
-  if (kind === "remote") return <NetworkIcon className="size-3.5 text-subtle-foreground" />;
-  return <GitBranchIcon className="size-3.5 text-subtle-foreground" />;
+  return <VcsIcon className="size-3.5 text-subtle-foreground" />;
 }
 
 interface GitReferenceTreeProps {

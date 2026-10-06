@@ -44,7 +44,7 @@
   padding: 2px 6px;
   border-bottom: 1px solid var(--commit-diff-toolbar-border);
   background: var(--commit-diff-toolbar-background);
-  overflow-x: auto;
+  overflow: hidden;
 }
 
 .commit-diff-toolbar button[data-size="icon-xs"] {

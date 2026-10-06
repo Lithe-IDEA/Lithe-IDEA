@@ -19,7 +19,9 @@ import {
 import { useTerminalShellsStore } from "@/features/terminal/stores/shells.store";
 import { useTranslation } from "@/i18n/locale-provider";
 import { Button } from "@/ui/button";
+import NumberInput from "@/ui/number-input";
 import Switch from "@/ui/switch";
+import { SETTINGS_CONTROL_WIDTHS } from "./settings-section";
 import { LogSettingsPanel } from "./log-settings-panel";
 import { MavenSettingsPanel } from "./tabs/maven-settings-panel";
 import { GitSettings } from "./tabs/git-settings";
@@ -296,13 +298,14 @@ function EditorPanel() {
     <div className="flex flex-col gap-4">
       <SettingsGroup title={t("settings.mac.display")}>
         <SettingsRow label={t("settings.mac.fontSize")}>
-          <input
-            type="number"
+          <NumberInput
             min={10}
             max={22}
-            className={`${controlClassName} w-20 text-right`}
+            size="md"
+            className={SETTINGS_CONTROL_WIDTHS.numberCompact}
+            aria-label={t("settings.mac.fontSize")}
             value={settings.fontSize}
-            onChange={(event) => void updateSetting("fontSize", Number(event.target.value))}
+            onChange={(value) => void updateSetting("fontSize", value)}
           />
         </SettingsRow>
         <SettingsRow label={t("settings.mac.showCodeVision")}>

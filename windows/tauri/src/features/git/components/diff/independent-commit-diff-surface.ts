@@ -1,4 +1,5 @@
 import type * as monaco from "monaco-editor";
+import { EDITOR_CONSTANTS } from "@/features/editor/config/constants";
 import {
   startDocumentResizeSession,
   type DocumentResizeSession,
@@ -21,7 +22,7 @@ import {
 const RAIL_WIDTH = 12,
   RAIL_GAP = 4,
   SLIDER_WIDTH = 8,
-  WHEEL_SENSITIVITY = 2,
+  WHEEL_SENSITIVITY = EDITOR_CONSTANTS.MOUSE_WHEEL_SCROLL_SENSITIVITY,
   MIN_CODE_WIDTH = 80,
   GUTTER_INSET = 10,
   BLOCK_ACTION_WIDTH = 22,

@@ -259,6 +259,11 @@ Profiles 上游为 17×16，其余本次资源为 16×16；`LitheIDEAIcon.width`
 这些 SVG 是构建时打包的只读源资源，不增加下载器、运行时缓存或可写 bundle 路径。
 资源许可和导入路径记录于 `macos/Resources/IDEAIcons/NOTICE.txt`。
 
+Agent 输入区底栏的切换菜单向上展开，菜单底边锚定触发控件顶边，避免覆盖状态栏。
+`LitheMenu` 将展开方向交给共享呈现器，调用方不增加坐标偏移。供应商行显式提交
+已有 `AgentBrandIcon` 的 16pt 品牌图标并保留独立勾选；此前只提交名称导致图标缺失。
+这些资源是构建时打包的只读输入，不增加运行时写入或下载。
+
 ## 验证
 
 `ContextMenuCoverageTests.dropdownTriggerClosesItsPopupAndSwitchesToAnother` 用原生

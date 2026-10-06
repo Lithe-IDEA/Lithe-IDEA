@@ -158,10 +158,14 @@ struct AgentComposerView: View {
     }
 
     private var agentMenu: some View {
-        LitheMenu {
+        LitheMenu(opensUpward: true) {
             if agents.isEmpty { LitheContextMenuItem.heading("No Agent is set up yet") }
             for agent in agents {
-                LitheContextMenuItem.action(agent.name, checked: agent.id == selectedAgent?.id) {
+                LitheContextMenuItem.action(
+                    agent.name,
+                    icon: AnyView(AgentBrandIcon(name: agent.name, size: 16, style: .brand)),
+                    checked: agent.id == selectedAgent?.id
+                ) {
                     onSelectAgent(agent.id)
                 }
             }

@@ -34,12 +34,14 @@ extension LitheContextMenuItem {
 struct LitheMenu<Label: View>: View {
     @State private var isPresented = false
     let opensToSide: Bool
+    let opensUpward: Bool
     let items: () -> [LitheContextMenuItem]
     let label: () -> Label
 
-    init(opensToSide: Bool = false, @LitheMenuItemsBuilder content: @escaping () -> [LitheContextMenuItem],
+    init(opensToSide: Bool = false, opensUpward: Bool = false, @LitheMenuItemsBuilder content: @escaping () -> [LitheContextMenuItem],
          @ViewBuilder label: @escaping () -> Label) {
         self.opensToSide = opensToSide
+        self.opensUpward = opensUpward
         items = content
         self.label = label
     }
@@ -48,7 +50,7 @@ struct LitheMenu<Label: View>: View {
         let menuItems = items()
         let button = Button { isPresented.toggle() } label: { label() }
             .overlay {
-                LitheDropdownPopover(opensToSide: opensToSide, isPresented: $isPresented, items: menuItems) { EmptyView() }
+                LitheDropdownPopover(opensUpward: opensUpward, opensToSide: opensToSide, isPresented: $isPresented, items: menuItems) { EmptyView() }
             }
             .disabled(menuItems.isEmpty)
         if opensToSide {

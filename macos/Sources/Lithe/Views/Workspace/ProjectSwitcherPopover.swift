@@ -2,18 +2,22 @@ import SwiftUI
 
 @MainActor
 enum ProjectSwitcherLayoutMetrics {
-    static func width(projects: [(name: String, path: String)], locale: Locale) -> CGFloat {
+    static func width(projects: [(name: String, path: String)], branches: [String] = [], locale: Locale) -> CGFloat {
         let commands = ["New Project…", "Open…", "Clone Repository…"].map {
             LitheContextMenuItem.action($0, systemImage: "plus") {}
         }
         let projectWidth = projects.map { project in
             let name = (project.name as NSString).size(withAttributes: [.font: LitheTheme.uiNSFont(size: 13)]).width
             let path = (project.path as NSString).size(withAttributes: [.font: LitheTheme.uiNSFont(size: 12)]).width
-            return max(name, path) + LitheDropdownMetrics.projectAvatarSize + 8
+            return max(name, path) + LitheDropdownMetrics.projectAvatarSize + 8 + 6
                 + 2 * (LitheDropdownMetrics.popupPadding + LitheDropdownMetrics.itemHorizontalPadding)
         }.max() ?? 0
-        return min(LitheDropdownMetrics.maximumWidth,
-                   max(LitheContextMenuPresenter.menuWidth(for: commands, locale: locale), ceil(projectWidth)))
+        let branchWidth = branches.map {
+            ($0 as NSString).size(withAttributes: [.font: LitheTheme.uiNSFont(size: 12)]).width
+                + LitheDropdownMetrics.iconSize + 4 + LitheDropdownMetrics.projectAvatarSize + 8 + 6
+                + 2 * (LitheDropdownMetrics.popupPadding + LitheDropdownMetrics.itemHorizontalPadding)
+        }.max() ?? 0
+        return max(LitheContextMenuPresenter.menuWidth(for: commands, locale: locale), ceil(max(projectWidth, branchWidth)))
     }
     static let maximumHeight: CGFloat = 520
 }
@@ -24,6 +28,7 @@ struct ProjectSwitcherPopover: View {
     @EnvironmentObject private var projectSessions: ProjectSessionManager
     @Environment(\.projectWindowScope) private var projectWindowScope
     @Binding var isPresented: Bool
+    @State private var projectBranches: [String: String] = [:]
     let onNewProject: () -> Void
     let onOpenProject: () -> Void
     let onCloneRepository: () -> Void
@@ -39,6 +44,11 @@ struct ProjectSwitcherPopover: View {
 
     private var recentProjects: [RecentProject] {
         model.recentProjects.filter { !openProjectPaths.contains($0.url.standardizedFileURL.path) }
+    }
+
+    private var projectPaths: [String] {
+        scopedOpenProjects.compactMap { $0.workspaceURL?.standardizedFileURL.path }
+            + recentProjects.map { $0.url.standardizedFileURL.path }
     }
 
     var body: some View {
@@ -80,9 +90,19 @@ struct ProjectSwitcherPopover: View {
         }
         .frame(width: ProjectSwitcherLayoutMetrics.width(
             projects: scopedOpenProjects.map { ($0.projectName, displayPath($0.workspaceURL?.path ?? "")) }
-                + recentProjects.map { ($0.name, displayPath($0.path)) }, locale: locale
+                + recentProjects.map { ($0.name, displayPath($0.path)) }, branches: Array(projectBranches.values), locale: locale
         ))
         .frame(maxHeight: ProjectSwitcherLayoutMetrics.maximumHeight)
+        .task(id: projectPaths) {
+            projectBranches = [:]
+            guard let git = await model.activateGitModule() else { return }
+            for path in projectPaths {
+                guard !Task.isCancelled else { return }
+                let branch = await git.repositorySetup.branch(at: URL(fileURLWithPath: path))
+                guard !Task.isCancelled else { return }
+                projectBranches[path] = branch
+            }
+        }
     }
 
     private var divider: some View {
@@ -162,15 +182,24 @@ struct ProjectSwitcherPopover: View {
             ProjectAvatarBadge(name: name, colorIndex: colorIndex, size: LitheDropdownMetrics.projectAvatarSize, isEnabled: isEnabled)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(name)
+                Text(verbatim: name)
                     .font(LitheTheme.uiFont(size: 13, weight: .regular))
                     .lineLimit(1)
-                Text(displayPath(path))
+                Text(verbatim: displayPath(path))
                     .font(LitheTheme.uiFont(size: 12))
                     .foregroundStyle(LitheTheme.secondaryText)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                if let branch = projectBranches[URL(fileURLWithPath: path).standardizedFileURL.path] {
+                    HStack(spacing: 4) {
+                        LitheIDEAIcon(resourcePath: "expui/general/vcs.svg", size: LitheDropdownMetrics.iconSize)
+                        Text(verbatim: branch).fixedSize(horizontal: true, vertical: false)
+                    }
+                    .font(LitheTheme.uiFont(size: 12))
+                    .foregroundStyle(LitheTheme.secondaryText)
+                }
             }
+            .layoutPriority(1)
 
             Spacer(minLength: 6)
         }

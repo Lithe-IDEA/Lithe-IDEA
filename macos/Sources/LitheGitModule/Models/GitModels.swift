@@ -208,13 +208,17 @@ package struct GitReference: Identifiable, Hashable, Sendable {
     package let peelsToCommit: Bool
     package let isCurrent: Bool
     package let upstreamShortName: String?
+    package let ahead: Int
+    package let behind: Int
     package init(
         fullName: String,
         shortName: String,
         kind: GitReferenceKind,
         peelsToCommit: Bool = true,
         isCurrent: Bool,
-        upstreamShortName: String?
+        upstreamShortName: String?,
+        ahead: Int = 0,
+        behind: Int = 0
     ) {
         self.fullName = fullName
         self.shortName = shortName
@@ -222,6 +226,8 @@ package struct GitReference: Identifiable, Hashable, Sendable {
         self.peelsToCommit = peelsToCommit
         self.isCurrent = isCurrent
         self.upstreamShortName = upstreamShortName
+        self.ahead = ahead
+        self.behind = behind
     }
 
     package var id: String { fullName }

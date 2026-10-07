@@ -188,6 +188,61 @@ pub fn references(request: GitReferencesRequest) -> Result<GitReferencesResponse
             .lines()
             .filter_map(parse_reference),
     );
+    if references
+        .iter()
+        .any(|reference| reference.kind == "local" && reference.upstream_short_name.is_none())
+    {
+        let remotes = readonly_command(GitCommandRequest {
+            root: root.clone(),
+            arguments: vec!["remote".to_string()],
+            input: None,
+        })?;
+        if remotes.exit_code != 0 {
+            return Err(
+                CoreError::new(ErrorCode::ProcessFailed, "Git remotes failed")
+                    .with_details(remotes.output),
+            );
+        }
+        let mut tracking_arguments = Vec::new();
+        for remote in remotes.output.lines().filter(|remote| !remote.is_empty()) {
+            // A narrow fetch refspec can leave %(upstream) empty even when
+            // branch.remote/merge and the tracking ref exist. Let Git resolve
+            // that configuration with a conventional mapping for this read only.
+            tracking_arguments.extend([
+                "-c".to_string(),
+                format!("remote.{remote}.fetch=+refs/heads/*:refs/remotes/{remote}/*"),
+            ]);
+        }
+        if !tracking_arguments.is_empty() {
+            tracking_arguments.extend(reference_arguments);
+            let tracking = execute_git_readonly_with_environment(
+                &root,
+                &tracking_arguments,
+                None,
+                &[("LC_ALL".to_string(), "C".to_string())],
+            )?;
+            if tracking.exit_code != 0 {
+                return Err(CoreError::new(
+                    ErrorCode::ProcessFailed,
+                    "Git tracking references failed",
+                )
+                .with_details(tracking.output));
+            }
+            let mut tracked: std::collections::HashMap<_, _> = tracking
+                .output
+                .lines()
+                .filter_map(parse_reference)
+                .map(|reference| (reference.full_name.clone(), reference))
+                .collect();
+            for reference in references.iter_mut().filter(|reference| {
+                reference.kind == "local" && reference.upstream_short_name.is_none()
+            }) {
+                if let Some(tracking) = tracked.remove(&reference.full_name) {
+                    *reference = tracking;
+                }
+            }
+        }
+    }
     let recent_references = recent_local_references(&root, &references, RECENT_BRANCH_LIMIT);
     Ok(GitReferencesResponse {
         references,

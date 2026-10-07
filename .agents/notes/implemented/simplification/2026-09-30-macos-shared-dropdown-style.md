@@ -48,6 +48,111 @@ IDEA 的 `AbstractPopup` / `WindowRoundedCornersManager` 将 macOS 深色 toolti
 `WorkbenchHoverTooltipTests.sharedTooltipPalette` 检查深浅实际渲染像素；原有
 四周定位、窄窗换行和窗口隔离检查继续保留。
 
+### 分支名称的原位展开
+
+顶部项目、分支按钮使用箭头光标，分支按钮不再附加完整名称帮助提示。
+完整名称在分支列表里查看：被截断的行悬停时沿原位置展开，保留整行的
+选中底色、字体、图标和高度，显示完整本地分支和 upstream（跟踪的远端引用）。
+已显示完整的行不展开，也不改变弹窗保存的宽度。
+
+依据 Community `c7f91397daa3a961b4e78bc634fe467a0a7d9ade` 的
+`platform/platform-impl/src/com/intellij/ui/TreeExpandableItemsHandler.java`、
+`AbstractExpandableItemsHandler.java` 和
+`plugins/git4idea/shared/src/com/intellij/vcs/git/branch/tree/GitBranchesTreeRenderer.kt`：
+展开内容来自同一行 renderer，并沿用树的选择底色和圆角，而不是普通 `HelpTooltip`。
+Lithe 使用 `BranchPopupRowView` 包装原有 SwiftUI 行，保留共享 `LitheDropdownRowStyle`；
+行的原生 `mouseEntered` 直接显示一个非激活子窗口，复用同一行 renderer，
+保持屏幕中的原行位置、普通字重、选择底色和高度，超出屏幕时限制右边界。
+不依赖 `NSControl.allowsExpansionToolTips`：普通自定义控件附加 cell 后，
+直接调用 cell 的检查通过，但用户实测仍未出现展开，不能继续把它当作可靠入口。
+子窗口接收该行点击并转交原动作，键盘焦点留在父弹窗；滚轮转交原行滚动路径。
+离开、打开动作菜单、禁用、脱离窗口及父窗口关闭都清理浮层及父窗口关闭观察器。
+只测量当前悬停行，不给空闲行登记全局悬浮几何；展开使用当前分组里的本地名称，
+不额外插入 namespace。
+行点击仍通过 `LitheDropdownPopover` 打开动作菜单，无障碍按下和键盘按下保留。
+滚动导致 AppKit 重建鼠标跟踪区域时，不能依赖旧区域一定发送离开事件；
+`updateTrackingAreas` 按当前窗口鼠标位置重新判断行的 hover，只在结果变化时重绘。
+命中同时要求行自身边界和滚动可见区包含鼠标，因为不裁剪的原生视图可见区
+可能超出自身边界；只检查可见区会把同一窗口内多行同时判为悬停。
+回归检查固定窗口鼠标位置、移动原生滚动区，确认 hover 随当前行转移，
+已打开动作菜单的行仍保留高亮，不添加全局滚轮监听或每行滚动观察器。
+原先附加 `.help` 的做法只提供独立文字提示，不能复现这种原位展开，因此移除。
+`BranchSwitcherPopoverBehaviorTests` 检查深浅选中底色、尺寸、无须展开的行、
+动作和禁用行为；悬停必须实际创建可见子窗口，检查完整内容、原行位置、
+绘制底色、点击转交、焦点及父窗口关闭清理，不能再直接调用展开或绘制方法证明触发。
+完整预览已核对分支列表、长名称截断和搜索，原生悬浮层与实际菜单的组合
+尚未取得可靠的实机截图，不能用组件截图代替最终视觉验收。
+
+右侧上游列依据同一 Community revision 的
+`plugins/git4idea/shared/src/com/intellij/vcs/git/branch/popup/GitDefaultBranchesTreeRenderer.kt`：
+本地名称优先占用空间，上游列靠右、末尾省略，选中时沿用行文字颜色，未选中时为
+`JBColor.GRAY`。上游来自真实 Git 跟踪配置，不能通过同名远端分支猜测或为了截图
+改用户的 Git 配置。Recent 和 Local 均使用 Core 返回的引用元数据。单分支 fetch 映射不能让已配置的
+上游消失；Core 的补齐规则见
+[Git 执行与项目控制台](../architecture/2026-09-12-git-execution-and-project-console.md#单分支抓取规则下的上游信息)，
+页面不修改 Git 配置，也不自行解析跟踪信息。
+
+领先／落后计数原本已由 Core 返回，但 macOS 丢弃了 `ahead` / `behind`；
+历史和单独引用的解码路径现在都保留这些字段，缺字段的旧响应仍按零处理。
+计数复用 Community `GitIncomingOutgoingUi` 的颜色、99+ 上限和
+`DvcsIconMappings.json` 指向的 12pt New UI 原始 SVG，保留深浅变体。
+资源是构建时打包的只读输入，不在运行时下载或写入 bundle。
+
+### 分支弹窗尺寸
+
+只有顶部的分支弹窗在右边缘提供拖动调整宽度的入口。共享呈现器只为传入
+宽度绑定的自定义弹窗安装已有 `SplitHandleInteractionView` 原生分隔条命中组件，
+普通菜单不安装；其他调用点不传宽度绑定。右侧 10pt 命中区使用水平调整光标。
+命中区与 `NSHostingView` 放在同一个原生容器中，由这个容器统一拥有宽度。
+不能只设置 AppKit `NSPanel` 的 resizable 标志，因为无边框窗口不会因此提供
+可用的边缘拖动入口；还必须避免宿主的理想宽度把窗口改回默认值。
+
+弹窗是独立窗口，不能嵌入工作台内部的 `LitheSplitPaneView` 分隔布局。
+复用原生命中组件的屏幕坐标和 `LitheDragUpdateScheduler` 事件合并，
+拖动只调整原生窗口框架，不向工作台逐帧发布宽度。
+默认及最小宽度沿用 375pt，最大宽度受窗口右侧的屏幕可用区域限制。初始高度由内容决定；
+右侧两个角增加宽高联动拖动，最小高度取 Community `GitBranchesPopupBase` 的 312pt，
+最大高度受对应方向的屏幕边界限制。搜索框固定在顶部；其下的操作项、分隔线和分支列表共用一个滚动区，
+不能只让 Recent／Local 等分支分组滚动。缩小弹窗后操作项也能滚出视口，
+各行高度不变，保留原默认弹窗高度。
+`actionsAndBranchesShareScrollingWhileSearchStaysFixed` 用小视口检查唯一原生滚动区、
+操作项参与滚动内容，以及滚动时搜索框位置不变。
+内容筛选、分组展开或数据刷新不能把用户调整后的宽度重置成默认值。
+`NSHostingController.preferredContentSize` 会安装优先级 501 的理想宽度约束，
+原生窗口启用约束布局后会据此把宽度改回 375pt。容器用一个明确的宽度约束
+表达用户选择，只在原生拖动及内容尺寸校验时更新其常量；手动调整高度后也用
+明确的高度约束，避免宿主在下一轮布局恢复理想高度。
+不能只修改窗口 frame 而忽略约束，否则看似执行了缩放，显示时又被改回。
+
+右侧两个角复用 `ProjectReplaceCornerHandleView` 的稳定屏幕坐标和清理逻辑。
+依据同一 Community revision 的 `platform/platform-impl/src/com/intellij/ui/WindowMouseListenerSupport.kt`
+与 `WindowResizeListener.java`，右上角使用 `NE_RESIZE_CURSOR`（东北—西南），
+右下角使用 `SE_RESIZE_CURSOR`（西北—东南）；macOS 15 起只在分支弹窗覆盖为
+原生 `NSCursor.frameResize`，较旧系统复用现有斜向光标，其他控件的光标不变。
+分支角落跟踪使用 `activeAlways`，不依赖非激活弹窗先获得键盘焦点；
+弹窗启用鼠标移动事件，在事件分发后按原生命中区设置调整光标，防止子视图
+覆盖它。回归通过真实窗口发送鼠标移动事件，要求第一次点击之前光标就正确。
+10pt 角落命中区盖在右边缘上，仅分支弹窗显式启用；两轴用同一次合并更新改变
+原生窗口，左侧固定，右上角拖动固定底边，右下角拖动固定顶边。
+松开后同步被拖动的原生锚点：向下打开时更新右上角移动后的顶边，
+向上打开时更新右下角移动后的底边，内容刷新不能把它拉回拖动前的位置。
+连续拖动以 `display: false` 修改原生窗口，把重绘交给 AppKit 下次绘制周期；
+不能每个鼠标事件都同步刷新窗口。初次打开、普通菜单和持久化流程不受影响。
+松开才更新宽高绑定并通过 `WorkbenchLayoutStore` 保存到当前项目的布局。
+新增可选字段兼容旧布局，不改变侧栏和 Maven 面板尺寸的保存方式。
+其他项目使用自己的宽高；屏幕变窄时只限制显示尺寸，不在打开弹窗时覆盖保存值。
+`ContextMenuCoverageTests` 经真实窗口发送按下、拖动、松开事件，检查原生命中、
+两个角的原生光标、相反边固定、尺寸限制、松开回调及刷新保宽，
+用连续 20 次原生拖动事件确认只合并交付一次且拖动中不保存，
+并确认普通弹窗没有拖动命中区。该计时不代表复杂工作区的帧流畅度验收。
+该检查必须启用原生约束引擎并强制布局；先前同步宿主未启用它，曾误报通过。
+补上约束后已复现 375pt 回退，修复后检查实际窗口尺寸保持用户值；
+`WorkbenchMavenLayoutTests` 检查旧数据兼容和项目隔离。2026-10-07 完整应用预览中，
+实际拖动后的窗口宽度与请求值一致（仅有原生像素取整），用户确认拖动已经生效；
+诊断日志随后移除。新增右下角检查经真实窗口发送双轴鼠标事件，验证命中、
+松开提交、宽高上下限、宿主尺寸和关闭恢复；项目持久化和隔离由布局测试覆盖。
+新增角落与上游列尚需完整应用的实机视觉验收，完整 Git 工作流仍按功能矩阵待验收。
+
 ### 全局通知与右侧底部动作
 
 全局短通知由 `WorkbenchNotificationBanner` 统一呈现，外框归
@@ -172,7 +277,9 @@ Agent 仅重建变化的设置行菜单，保持可搜索父面板和其他配�
 并允许 IDEA 自身保存用户调整后的大小。因此两个菜单不要求一样宽。
 Lithe 的项目菜单按本地化命令、项目名称与显示路径测量，复用
 `LitheContextMenuPresenter.menuWidth` 和 `LitheDropdownMetrics` 的宽度边界；
-360pt 上限是 Lithe 现有共享规则，不宣称是 IDEA 的固定宽度。
+项目菜单不再受普通操作菜单的 360pt 上限限制；按名称、路径和分支的实际字体宽度展开，由原生呈现器限制在当前屏幕可见区域。普通操作菜单的上限保持不变。宽度使用实际 frame 而不是仅提供 `idealWidth`，让异步分支到达后宿主的首选尺寸确实变大；分支文本保持单行自然宽度，不进行中间省略。
+
+项目条目参考同一 IDEA revision 的 `ProjectToolbarWidgetAction.kt` / `ProjectWidgetRenderer`：名称和路径下方按需增加分支图标与常规小字号的第三行。`AllIcons.Vcs.Branch` 在 New UI 的 `PlatformIconMappings.json` 映射到 `expui/general/vcs.svg`，复用仓库现有的明暗 SVG，不使用旧 `vcs/branch.svg` 文件中的列表形图案。每次打开菜单时通过既有 Git 仓库检查器读取打开项目和最近项目的当前分支，不保存上次显示的分支名。读取只返回元数据，不覆盖当前工作区的 Git 身份编辑草稿；取消菜单任务后不再写入结果。没有 Git 仓库、分离 HEAD 或 Git 模块未启用时不显示分支行。这样避免每个项目启动完整 Git 状态刷新和文件扫描；代价是分支行在异步读取完成后出现。
 分支菜单的 375pt 基准也集中在 `LitheDropdownMetrics` 中。
 
 `ExpandableComboAction.showUnderneathOf` 按完整工具栏控件的下缘定位；
@@ -284,8 +391,9 @@ Agent 输入区底栏的切换菜单向上展开，菜单底边锚定触发控�
 - `itemBuilderKeepsConditionalActionsDisabledChoicesAndSubmenus` 验证条件、动态条目、勾选、禁用、子菜单及危险动作类型保留。
 - `WorkbenchRenderingSafetyTests` 检查项目/分支使用共享入口，打开时保持 hover 色而不是菜单选中色。
 
-- `ContextMenuCoverageTests.projectPopupMeasuresContentInsteadOfKeepingA390PointWidth` 检查短路径自然宽度与长路径共享上限。
+- `ContextMenuCoverageTests.projectPopupMeasuresContentInsteadOfKeepingA390PointWidth` 检查短路径自然宽度，以及长路径和分支不受普通操作菜单上限限制。
 - `ContextMenuCoverageTests.topbarDropdownsLeaveToolbarMarginAndRenderRealSharedContent` 渲染真实项目/分支菜单的明暗原生窗口，检查锚点槽位、无动画、宽度限制、打开时按钮保留 hover 底色、关闭后释放、卸载关闭，并可保存捕获图。
+- `ProjectSwitcherBranchTests.projectMetadataReadsCurrentBranchWithoutChangingIdentityDrafts` 通过真实 Core 仓库检查器验证普通目录省略分支、未提交仓库显示当前分支、外部切换后重新读取，以及身份编辑草稿不受影响。
 - `BundledUIFontTests.packagedFontsRegisterAtProcessScopeAndRemainUnchanged` 用实际注册字体比较共享项目徽标与 JetBrains Mono SemiBold 13pt 的白色字母像素，防止回退到 Inter Bold；字体资源注册与清理沿用原测试所有权。
 - `ContextMenuCoverageTests.projectAndActionDropdownsRenderTheSameChrome` 捕获真实原生菜单面板，检查 Project 与设置菜单在明暗主题下的背景、边框和高度。
 - `ContextMenuCoverageTests.submenuStartsAtItsTriggerRowAndKeepsCopyTitlesVisible` 捕获真实明暗菜单，验证靠下的触发行、子菜单上方透明区、主菜单位置固定及完整复制标题的宽度。

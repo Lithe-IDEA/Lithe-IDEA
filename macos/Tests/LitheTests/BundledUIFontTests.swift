@@ -19,7 +19,8 @@ struct BundledUIFontTests {
         defer { try? FileManager.default.removeItem(at: temporary) }
         let fonts = try FileManager.default.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)
             .filter { ["ttf", "otf"].contains($0.pathExtension) }
-        #expect(fonts.count == 34)
+        #expect(fonts.count == 38)
+        let notice = try String(contentsOf: source.appendingPathComponent("NOTICE.txt"), encoding: .utf8)
         var hashes: [String: Data] = [:]
         for font in fonts {
             let destination = resources.appendingPathComponent(font.lastPathComponent)
@@ -42,10 +43,12 @@ struct BundledUIFontTests {
         MacBundledFontRegistry.registerFonts(bundle: bundle) { messages.append($0) }
         #expect(messages.isEmpty)
         for font in fonts {
+            let isNerdFont = font.lastPathComponent.hasPrefix("JetBrainsMonoNerdFontMono-")
             let name = font.deletingPathExtension().lastPathComponent
+                .replacingOccurrences(of: "JetBrainsMonoNerdFontMono-", with: "JetBrainsMonoNFM-")
             let registered = try #require(NSFont(name: name, size: 13))
-            #expect(registered.familyName == (name.hasPrefix("Inter-") ? "Inter" : "JetBrains Mono"))
-            if name.hasPrefix("JetBrainsMono-") {
+            #expect(registered.familyName == (isNerdFont ? "JetBrainsMono Nerd Font Mono" : name.hasPrefix("Inter-") ? "Inter" : "JetBrains Mono"))
+            if name.hasPrefix("JetBrainsMono-") || isNerdFont {
                 let version = try #require(CTFontCopyName(registered, kCTFontVersionNameKey) as String?)
                 #expect(version.contains("2.304"))
             } else {
@@ -53,9 +56,50 @@ struct BundledUIFontTests {
                 let version = try #require(CTFontCopyName(registered, kCTFontVersionNameKey) as String?)
                 #expect(version.contains("4.001"))
             }
+            if isNerdFont {
+                let pinned = try #require(notice.split(separator: "\n").first { $0.hasSuffix("  " + font.lastPathComponent) })
+                #expect(hashes[font.lastPathComponent]?.map { String(format: "%02x", $0) }.joined() == String(pinned.prefix(64)))
+            }
             let location = try #require(CTFontCopyAttribute(registered, kCTFontURLAttribute) as? URL)
             #expect(location.standardizedFileURL == resources.appendingPathComponent(font.lastPathComponent))
             #expect(Data(SHA256.hash(data: try Data(contentsOf: location))) == hashes[font.lastPathComponent])
+        }
+        let terminal = MacTerminalTransport()
+        defer { terminal.stop() }
+        #expect(terminal.view.font.pointSize == 12.5)
+        #expect(terminal.view.font.familyName?.contains("Nerd Font Mono") == true,
+                "Packaged Nerd Font must prevent the Menlo / unpatched JetBrains Mono fallback")
+        for traits: NSFontTraitMask in [[], .boldFontMask, .italicFontMask, [.boldFontMask, .italicFontMask]] {
+            let face = NSFontManager.shared.convert(terminal.view.font, toHaveTrait: traits)
+            for symbol in ["\u{e0b6}", "\u{e0b0}", "\u{f418}", "\u{e76f}", "\u{f0001}"] {
+                let line = CTLineCreateWithAttributedString(NSAttributedString(string: symbol, attributes: [.font: face]))
+                let runs = CTLineGetGlyphRuns(line) as! [CTRun]
+                let run = try #require(runs.first)
+                let attributes = CTRunGetAttributes(run) as NSDictionary
+                let resolved = try #require(attributes[kCTFontAttributeName] as? NSFont)
+                #expect(resolved.fontName == face.fontName, "Prompt symbols must use the same face and metrics as text")
+                var glyph = CGGlyph(0)
+                CTRunGetGlyphs(run, CFRange(location: 0, length: 1), &glyph)
+                #expect(glyph != 0)
+            }
+        }
+        if let path = ProcessInfo.processInfo.environment["LITHE_TERMINAL_CAPTURE_DIR"] {
+            let destination = URL(fileURLWithPath: path)
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+            terminal.view.frame = NSRect(x: 0, y: 0, width: 720, height: 150)
+            let prompt = "\u{1b}[38;2;154;52;142m\u{e0b6}\u{1b}[48;2;154;52;142m\u{1b}[37muser \u{1b}[38;2;154;52;142m\u{1b}[48;2;218;98;125m\u{e0b0}\u{1b}[37m …/Lithe-IDEA \u{1b}[38;2;218;98;125m\u{1b}[48;2;252;161;125m\u{e0b0}\u{1b}[37m \u{f418} codex/issue-1082 $ \u{1b}[38;2;252;161;125m\u{1b}[48;2;134;187;216m\u{e0b0}\u{1b}[37m \u{e76f} v1.3.12 \u{1b}[38;2;134;187;216m\u{1b}[48;2;51;101;138m\u{e0b0}\u{1b}[37m ♥ 01:23 \u{1b}[0m\u{1b}[38;2;51;101;138m\u{e0b0}\u{1b}[0m\r\n"
+            for dark in [false, true] {
+                terminal.view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                terminal.view.applyThemeColors()
+                terminal.view.feed(text: "\u{1b}[2J\u{1b}[H" + prompt + prompt)
+                let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1440, pixelsHigh: 300,
+                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+                bitmap.size = terminal.view.bounds.size
+                terminal.view.cacheDisplay(in: terminal.view.bounds, to: bitmap)
+                try #require(bitmap.representation(using: .png, properties: [:]))
+                    .write(to: destination.appendingPathComponent("starship-\(dark ? "dark" : "light").png"))
+            }
         }
         for (weight, face) in [(NSFont.Weight.regular, "Regular"), (.medium, "Medium"),
                                (.semibold, "SemiBold"), (.bold, "Bold")] {

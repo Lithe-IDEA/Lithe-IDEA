@@ -8,11 +8,15 @@ struct WorkbenchLayout: Codable, Sendable {
     let sidebarWidth: Double
     let topPaneHeight: Double?
     let mavenPaneWidth: Double?
+    let branchPopupWidth: Double?
+    let branchPopupHeight: Double?
 
-    init(sidebarWidth: Double, topPaneHeight: Double?, mavenPaneWidth: Double? = nil) {
+    init(sidebarWidth: Double, topPaneHeight: Double?, mavenPaneWidth: Double? = nil, branchPopupWidth: Double? = nil, branchPopupHeight: Double? = nil) {
         self.sidebarWidth = sidebarWidth
         self.topPaneHeight = topPaneHeight
         self.mavenPaneWidth = mavenPaneWidth
+        self.branchPopupWidth = branchPopupWidth
+        self.branchPopupHeight = branchPopupHeight
     }
 }
 
@@ -30,7 +34,9 @@ struct WorkbenchLayoutStore {
               let layout = try? JSONDecoder().decode(WorkbenchLayout.self, from: data),
               layout.sidebarWidth.isFinite,
               layout.sidebarWidth >= WorkbenchLayout.minimumPaneSize,
-              layout.mavenPaneWidth.map({ $0.isFinite && $0 >= WorkbenchLayout.minimumPaneSize }) ?? true else {
+              (layout.mavenPaneWidth.map({ $0.isFinite && $0 >= WorkbenchLayout.minimumPaneSize }) ?? true),
+              (layout.branchPopupWidth.map({ $0.isFinite && $0 > 0 }) ?? true),
+              layout.branchPopupHeight.map({ $0.isFinite && $0 > 0 }) ?? true else {
             return Self.defaultLayout
         }
         return layout

@@ -12,6 +12,8 @@ struct WorkbenchMavenLayoutTests {
         #expect(layout.sidebarWidth == 320)
         #expect(layout.topPaneHeight == 280)
         #expect(layout.mavenPaneWidth == nil)
+        #expect(layout.branchPopupWidth == nil)
+        #expect(layout.branchPopupHeight == nil)
     }
 
     @Test func committedMavenWidthIsRestoredPerWorkspace() {
@@ -23,6 +25,37 @@ struct WorkbenchMavenLayoutTests {
         #expect(restored.sidebarWidth == 300)
         #expect(restored.topPaneHeight == 280)
         #expect(store.load(for: URL(fileURLWithPath: "/fixture/maven-layout/other")).mavenPaneWidth == nil)
+    }
+
+    @Test func branchPopupSizeIsRestoredPerWorkspace() {
+        let store = WorkbenchLayoutStore(store: MavenLayoutTestStore())
+        let first = URL(fileURLWithPath: "/fixture/branch-popup/first")
+        let second = URL(fileURLWithPath: "/fixture/branch-popup/second")
+        store.save(WorkbenchLayout(sidebarWidth: 300, topPaneHeight: 280,
+                                   mavenPaneWidth: 410, branchPopupWidth: 620, branchPopupHeight: 560), for: first)
+        store.save(WorkbenchLayout(sidebarWidth: 320, topPaneHeight: nil, branchPopupWidth: 480, branchPopupHeight: 420), for: second)
+        #expect(store.load(for: first).branchPopupWidth == 620)
+        #expect(store.load(for: first).branchPopupHeight == 560)
+        #expect(store.load(for: second).branchPopupHeight == 420)
+        #expect(store.load(for: second).branchPopupWidth == 480)
+        #expect(store.load(for: first).mavenPaneWidth == 410)
+        #expect(store.load(for: first).topPaneHeight == 280)
+    }
+
+    @Test(arguments: [-1.0, 0.0, .infinity])
+    func invalidBranchPopupWidthsFallBackToDefault(width: Double) {
+        let store = WorkbenchLayoutStore(store: MavenLayoutTestStore())
+        let workspace = URL(fileURLWithPath: "/fixture/branch-popup/invalid")
+        store.save(WorkbenchLayout(sidebarWidth: 320, topPaneHeight: nil, branchPopupWidth: width), for: workspace)
+        #expect(store.load(for: workspace).branchPopupWidth == nil)
+    }
+
+    @Test(arguments: [-1.0, 0.0, .infinity])
+    func invalidBranchPopupHeightsFallBackToDefault(height: Double) {
+        let store = WorkbenchLayoutStore(store: MavenLayoutTestStore())
+        let workspace = URL(fileURLWithPath: "/fixture/branch-popup/invalid-height")
+        store.save(WorkbenchLayout(sidebarWidth: 320, topPaneHeight: nil, branchPopupHeight: height), for: workspace)
+        #expect(store.load(for: workspace).branchPopupHeight == nil)
     }
 
     @Test(arguments: [30.0, 219.0])

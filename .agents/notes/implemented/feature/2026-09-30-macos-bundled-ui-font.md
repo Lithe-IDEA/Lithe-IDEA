@@ -5,11 +5,11 @@
 ## 先说结论
 
 截图核对后，用户要求界面字体与 IDEA 对齐。macOS 普通界面使用已有的 Inter，
-编辑器、终端及显式等宽内容默认使用 JetBrains Mono 2.304；代码编辑器的编程字体族
+编辑器及显式等宽内容默认使用 JetBrains Mono 2.304，终端使用下文的 Nerd Font Mono 选择策略；代码编辑器的编程字体族
 可由用户改选其他已安装的等宽字体，该设置与回退规则见
 [macOS 代码编辑器可选择编程字体族](2026-10-07-macos-editor-programming-font-family.md)。
 普通界面统一从
-`LitheTheme.uiFont` 和 `uiNSFont` 获取，代码与终端使用 `editorFont`；保留控件字重，
+`LitheTheme.uiFont` 和 `uiNSFont` 获取，代码默认使用 `editorFont`，终端由 `MacTerminalTransport` 独立选择字体；保留控件字重，
 Project 树字号对齐 IDEA 的 13pt。欢迎页应用名、导航、普通项目名和常规操作按钮按 IDEA 使用 Regular，避免局部 Medium/SemiBold 覆盖默认字重。
 字体文件随安装包分发，用户无需自行安装；运行时只读加载。
 
@@ -29,8 +29,9 @@ Project 树字号对齐 IDEA 的 13pt。欢迎页应用名、导航、普通项�
 `macos/Resources/Fonts` 保存用户提供的 Inter 4.1 包中的 18 个原始静态 OTF（9 个字重及斜体，文件内部版本为 4.001）、许可，以及
 JetBrains Mono 2.304 的 16 个原始静态 TTF、OFL 和作者信息。Mono 文件与用户再次提供的归档逐文件核对，16 个文件均字节一致。
 普通 UI 通过明确的字型名称匹配 Regular、Medium、SemiBold、Bold 等真实字重；SwiftUI 不再对已经指定字型的字体重复调用 `.weight`。
-代码和终端默认读取 Mono 字型；`LitheTheme.editorFont` 仍然只表示打包字体，终端、
-Output 工具窗和提交信息输入框不跟随编辑器字体族设置。构建脚本在签名前复制到 app 的 `Fonts`
+代码默认读取 Mono 字型；`LitheTheme.editorFont` 仍然只表示打包字体。终端按下文
+独立选择 Nerd Font Mono，终端、Output 工具窗和提交信息输入框均不跟随编辑器字体族设置。
+构建脚本在签名前复制到 app 的 `Fonts`
 资源目录；CoreText（macOS 的字体管理服务）按 process 范围注册，即只对当前
 进程生效，不安装到用户系统。不能因机器已经装有同名字体而跳过打包资源。
 
@@ -41,6 +42,34 @@ Monaco 网页通过现有只读资源 adapter 加载同一字体目录。资源 
 或已签名安装包复制字体。
 
 字体的 TextStyle 重载必须透传 design；显式等宽 caption/headline 与按字号指定的 JetBrains Mono 保持一致。Git 文件树性能检查按当前行高和脏矩形计算可绘制行数上限，避免全局行高调整后仍锁死旧行数。
+
+### 终端字体例外
+
+PR #979 把终端原有的 Nerd Font 优先选择替换为固定的 JetBrains Mono 2.304，
+导致 Starship 的圆弧和私有区图标（由符号字体约定的字符）无法沿原路径显示。
+Issue #1082 恢复合并前 `b648761f^1` 的选择顺序：MesloLGS、JetBrainsMono、Hack、
+FiraCode、IosevkaTerm 的 Nerd Font Mono，然后 Menlo，最后系统等宽字体，字号保持 12.5pt。
+终端字体入口位于 `MacTerminalTransport`，不让全局编辑器字体覆盖它。
+
+给普通 JetBrains Mono 追加 symbols-only 回退虽然能补齐图标，但回退符号与普通文字的
+度量不同，圆弧拼接仍不能达到原效果。只恢复选择列表在未安装 Nerd Font 时又退到 Menlo，
+连箭头也缺失。因此随应用分发 Nerd Fonts v3.5.1 的完整 JetBrains Mono Nerd Font Mono，
+包含常规、粗体、斜体、粗斜体四个真实字型，保持旧列表能选择的完整字体和单元格度量。
+未新增代码依赖、不手绘符号、不修改 shell 配置、不要求用户安装字体。
+
+四个原始 TTF 及 OFL 许可放在现有 Git 跟踪的 Fonts 目录，来源与 SHA-256 固定在
+`NOTICE.txt`。构建阶段签名前复制；运行时只读、process 范围注册，不下载、解压或
+修改 bundle，不改变 Sparkle delta 基线。旧列表仍优先选已有 MesloLGS Nerd Font Mono，
+随后可选择打包的 JetBrainsMono Nerd Font Mono；没有可注册资源时仍有系统回退。
+新增字体约增加 10 MB 包资源，这是摆脱用户安装环境的代价。
+
+`BundledUIFontTests` 核对 38 个字型的来源、哈希与文件清单，确认实际终端选择了
+Nerd Font Mono；常规、粗体、斜体、粗斜体下的圆弧、箭头、Git、Bun 和补充平面图标
+直接来自同一个文字字型，避免系统缺字或不匹配的回退度量。
+设置 `LITHE_TERMINAL_CAPTURE_DIR` 可捕获真实 SwiftTerm 的明暗 CoreGraphics 样图；
+该样图不代替 Metal 实机验收。2026-10-07 在重新构建的预览中确认 Metal 终端的
+Starship 圆弧、箭头、Git/Bun 图标正常，用户随后明确确认已修复。运行 `./scripts/test-macos.sh --filter BundledUIFontTests`、
+`node scripts/test-reuse-worktree-resources.mjs` 和 `./scripts/verify-runtime-bundle-immutability.sh`。
 
 ### 原生 Diff 的编辑器字体与中央行号
 
@@ -196,7 +225,7 @@ Git Log 日期列按实际 UI 字体测量，避免换字体后宽度仍沿用�
 
 ## 验证
 
-`BundledUIFontTests` 以临时 bundle 验证 34 个字型的注册来源、Inter/Mono 版本、重复注册、
+`BundledUIFontTests` 以临时 bundle 验证 38 个字型的注册来源、Inter/Mono 版本、重复注册、
 原生 UI/代码字体分工和 Regular/Medium/SemiBold/Bold/Black 的真实字型匹配、SwiftUI/AppKit 实际字宽，以及注册前后的文件清单和 SHA-256。
 同一测试覆盖网页资源 adapter 的字体请求和目录逃逸拒绝。
 项目徽标的白色字母像素与实际 JetBrains Mono SemiBold 13pt 文字对照，验证共享

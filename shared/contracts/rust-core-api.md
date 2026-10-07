@@ -1282,7 +1282,12 @@ reference includes `peelsToCommit`; hosts use it to disable commit-only
 actions for legal tree/blob tags before the user reaches a failing mutation.
 Each local
 reference with an upstream also returns numeric `ahead` and `behind` counts
-against that fetched remote-tracking reference. References without an upstream,
+against that fetched remote-tracking reference. A restricted remote fetch refspec
+must not hide an explicitly configured `branch.<name>.remote` / `merge` relationship
+when its conventional remote-tracking ref exists. The reference snapshot resolves
+missing metadata using invocation-only Git configuration; it does not change
+repository fetch settings, guess tracking from matching names, or fetch remotely.
+References without an upstream,
 remote references, and tags return zero for both fields. Portable examples are
 `shared/fixtures/git/references-response-v1.json` and
 `shared/fixtures/git/history-page-response-v1.json`.

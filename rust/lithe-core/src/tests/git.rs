@@ -3531,6 +3531,61 @@ fn git_history_reports_tracking_counts_for_a_noncurrent_local_branch() {
     assert_eq!(feature["upstreamShortName"], "origin/feature");
     assert_eq!(feature["ahead"], 1);
     assert_eq!(feature["behind"], 1);
+    // Narrow fetch mappings must not hide configured tracking metadata. IDEA
+    // still displays and compares an existing remote-tracking ref in this case.
+    assert!(run(&[
+        "config",
+        "--replace-all",
+        "remote.origin.fetch",
+        "+refs/heads/main:refs/remotes/origin/main"
+    ])
+    .status
+    .success());
+    assert!(run(&["branch", "untracked"]).status.success());
+    assert!(
+        run(&["update-ref", "refs/remotes/origin/untracked", "HEAD"])
+            .status
+            .success()
+    );
+    let config_before = run(&["config", "--get-all", "remote.origin.fetch"]).stdout;
+    for command in ["git.references", "git.history"] {
+        let request = serde_json::json!({"id":"narrow-tracking", "command":command,
+            "payload":{"root":root, "limit":10}});
+        let response: Value = serde_json::from_str(&execute_json(&request.to_string()))
+            .expect("reference response should be JSON");
+        assert_eq!(response["ok"], true, "{response:?}");
+        let references = response["data"]["references"]
+            .as_array()
+            .expect("references should exist");
+        let feature = references
+            .iter()
+            .find(|r| r["shortName"] == "feature")
+            .expect("feature should exist");
+        assert_eq!(feature["upstreamShortName"], "origin/feature");
+        assert_eq!(feature["ahead"], 1);
+        assert_eq!(feature["behind"], 1);
+        let untracked = references
+            .iter()
+            .find(|r| r["shortName"] == "untracked")
+            .expect("untracked should exist");
+        assert!(untracked["upstreamShortName"].is_null());
+        assert_eq!(untracked["ahead"], 0);
+        assert_eq!(untracked["behind"], 0);
+        let recent = response["data"]["recentReferences"]
+            .as_array()
+            .expect("recent references should exist");
+        let feature = recent
+            .iter()
+            .find(|r| r["shortName"] == "feature")
+            .expect("recent feature should exist");
+        assert_eq!(feature["upstreamShortName"], "origin/feature");
+        assert_eq!(feature["ahead"], 1);
+        assert_eq!(feature["behind"], 1);
+    }
+    assert_eq!(
+        run(&["config", "--get-all", "remote.origin.fetch"]).stdout,
+        config_before
+    );
 }
 
 #[test]

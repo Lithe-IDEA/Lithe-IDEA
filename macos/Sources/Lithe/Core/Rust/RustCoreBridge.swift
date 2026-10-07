@@ -1110,6 +1110,8 @@ struct RustCoreBridge: Sendable, IncrementalLanguageServerRuntimeCore {
             let peelsToCommit: Bool
             let isCurrent: Bool
             let upstreamShortName: String?
+            let ahead: Int?
+            let behind: Int?
         }
 
         struct Commit: Decodable, Sendable {
@@ -1140,7 +1142,8 @@ struct RustCoreBridge: Sendable, IncrementalLanguageServerRuntimeCore {
                         kind: kind,
                         peelsToCommit: reference.peelsToCommit,
                         isCurrent: reference.isCurrent,
-                        upstreamShortName: reference.upstreamShortName
+                        upstreamShortName: reference.upstreamShortName,
+                        ahead: reference.ahead ?? 0, behind: reference.behind ?? 0
                     )
                 },
                 recentReferences: (recentReferences ?? []).compactMap { reference in
@@ -1151,7 +1154,8 @@ struct RustCoreBridge: Sendable, IncrementalLanguageServerRuntimeCore {
                         kind: kind,
                         peelsToCommit: reference.peelsToCommit,
                         isCurrent: reference.isCurrent,
-                        upstreamShortName: reference.upstreamShortName
+                        upstreamShortName: reference.upstreamShortName,
+                        ahead: reference.ahead ?? 0, behind: reference.behind ?? 0
                     )
                 },
                 commits: commits.map { commit in
@@ -1197,7 +1201,8 @@ struct RustCoreBridge: Sendable, IncrementalLanguageServerRuntimeCore {
                 shortName: reference.shortName,
                 kind: kind,
                 isCurrent: reference.isCurrent,
-                upstreamShortName: reference.upstreamShortName
+                upstreamShortName: reference.upstreamShortName,
+                ahead: reference.ahead ?? 0, behind: reference.behind ?? 0
             )
         }
     }

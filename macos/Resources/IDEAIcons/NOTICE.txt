@@ -98,3 +98,13 @@ PlatformIconMappings maps General.BalloonInformation and Ide.Notification.Close
 to these resources. Notification layout/theme tokens follow the same revision.
 The expui/general/chevronUp.svg and chevronUp_dark.svg pair is from that same
 revision and supplies the notification content collapse action.
+
+Branch popup counters use dvcs/changesPush@12x12 and changesUpdate@12x12
+(light/dark), copied from platform/dvcs-impl/shared/resources/icons/new at
+Community revision c7f91397daa3a961b4e78bc634fe467a0a7d9ade. DvcsIconMappings
+maps the Incoming/Outgoing icons to these New UI assets.
+
+The fileTypes/toml.svg and toml_dark.svg pair is copied unmodified from
+platform/icons/src/expui/fileTypes at Community revision
+c7f91397daa3a961b4e78bc634fe467a0a7d9ade. The shared file icon catalog selects
+the light resource in light mode and its dark sibling in dark mode.

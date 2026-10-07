@@ -11,7 +11,7 @@ enum MacBundledFontRegistry {
         .flatMap { face in
             let italic = face == "Regular" ? "Italic" : "\(face)Italic"
             return ["Inter-\(face).otf", "Inter-\(italic).otf"]
-        }
+        } + ["Regular", "Bold", "Italic", "BoldItalic"].map { "JetBrainsMonoNerdFontMono-\($0).ttf" }
 
     static func registerFonts(bundle: Bundle = .main) {
         registerFonts(bundle: bundle, reporter: report)

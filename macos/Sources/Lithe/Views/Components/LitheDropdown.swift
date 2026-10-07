@@ -63,8 +63,10 @@ struct LitheMenu<Label: View>: View {
 
 extension View {
     func litheDropdown<Content: View>(isPresented: Binding<Bool>, opensUpward: Bool = false, searchOnTyping: Bool = false,
+                                      resizableWidth: Binding<CGFloat>? = nil, minimumWidth: CGFloat = 0,
+                                      resizableHeight: Binding<CGFloat?>? = nil, minimumHeight: CGFloat = 0,
                                       @ViewBuilder content: @escaping () -> Content) -> some View {
-        overlay { LitheDropdownPopover(opensUpward: opensUpward, searchOnTyping: searchOnTyping, isPresented: isPresented, content: content) }
+        overlay { LitheDropdownPopover(opensUpward: opensUpward, searchOnTyping: searchOnTyping, resizableWidth: resizableWidth, minimumWidth: minimumWidth, resizableHeight: resizableHeight, minimumHeight: minimumHeight, isPresented: isPresented, content: content) }
     }
 }
 
@@ -95,6 +97,10 @@ struct LitheDropdownPopover<Content: View>: NSViewRepresentable {
     var opensUpward = false
     var opensToSide = false
     var searchOnTyping = false
+    var resizableWidth: Binding<CGFloat>? = nil
+    var minimumWidth: CGFloat = 0
+    var resizableHeight: Binding<CGFloat?>? = nil
+    var minimumHeight: CGFloat = 0
     @Binding var isPresented: Bool
     var items: [LitheContextMenuItem]? = nil
     let content: () -> Content
@@ -118,6 +124,10 @@ struct LitheDropdownPopover<Content: View>: NSViewRepresentable {
         context.coordinator.opensUpward = opensUpward
         context.coordinator.opensToSide = opensToSide
         context.coordinator.searchOnTyping = searchOnTyping
+        context.coordinator.resizableWidth = resizableWidth
+        context.coordinator.minimumWidth = minimumWidth
+        context.coordinator.resizableHeight = resizableHeight
+        context.coordinator.minimumHeight = minimumHeight
         context.coordinator.isPresented = $isPresented
         guard isPresented, let window = nsView.window else {
             if !isPresented { context.coordinator.dismiss() }
@@ -139,6 +149,10 @@ struct LitheDropdownPopover<Content: View>: NSViewRepresentable {
         var opensUpward = false
         var opensToSide = false
         var searchOnTyping = false
+        var resizableWidth: Binding<CGFloat>?
+        var minimumWidth: CGFloat = 0
+        var resizableHeight: Binding<CGFloat?>?
+        var minimumHeight: CGFloat = 0
         private let presenter = LitheContextMenuPresenter()
         var items: [LitheContextMenuItem]?
         private var menuIsPresented = false
@@ -179,7 +193,14 @@ struct LitheDropdownPopover<Content: View>: NSViewRepresentable {
             presenter.show(
                 contentController: controller, at: point,
                 appearance: appearance, opensUpward: opensUpward,
-                searchOnTyping: searchOnTyping, parentWindow: window, trigger: anchor
+                searchOnTyping: searchOnTyping, parentWindow: window, trigger: anchor,
+                resizableWidth: resizableWidth?.wrappedValue, minimumWidth: minimumWidth,
+                resizableHeight: resizableHeight?.wrappedValue, minimumHeight: minimumHeight,
+                onSizeChanged: { [weak self] size in
+                    // Set both dimensions before the width binding commits the project layout.
+                    self?.resizableHeight?.wrappedValue = size.height
+                    self?.resizableWidth?.wrappedValue = size.width
+                }
             ) { [weak self] in
                 guard let self else { return }
                 self.hostingController = nil

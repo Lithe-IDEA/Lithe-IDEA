@@ -438,11 +438,13 @@ private struct LitheContextMenuRow: View {
 private final class LitheContextMenuPanel: NSPanel {
     var handleKey: ((NSEvent) -> Bool)?
     var handleMouseMoved: ((NSEvent) -> Void)?
+    var handleResizeCursor: ((NSEvent) -> Void)?
     override var canBecomeKey: Bool { true }
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, handleKey?(event) == true { return }
         if event.type == .mouseMoved { handleMouseMoved?(event) }
         super.sendEvent(event)
+        if event.type == .mouseMoved { handleResizeCursor?(event) }
     }
 }
 
@@ -463,11 +465,32 @@ final class LitheContextMenuPresenter: NSObject, NSWindowDelegate {
     private var localEventMonitor: Any?
     private var globalEventMonitor: Any?
     private var visibleFrame: NSRect = .zero
+    private weak var customContentController: NSViewController?
     private var contentDismissed: (() -> Void)?
     private var contentAnchor: NSPoint?
     private var contentOpensUpward = false
+    private var contentIsAboveAnchor = false
     private var contentIsAnchored = false
+    private var contentWidthConstraint: NSLayoutConstraint?
+    private var contentWidth: CGFloat?
+    private var contentMinimumWidth: CGFloat = 0
+    private var contentResizeHandle: SplitHandleInteractionView?
+    private var contentResizeStartWidth: CGFloat?
+    private let contentResizeScheduler: LitheDragUpdateScheduler
+    private var contentSizeChanged: ((CGSize) -> Void)?
+    private var contentHeight: CGFloat?
+    private var contentMinimumHeight: CGFloat = 0
+    private var contentHeightConstraint: NSLayoutConstraint?
+    private var contentCornerHandles: [ProjectReplaceCornerHandleView] = []
+    private var contentResizeCorner = ProjectReplacePanelGeometry.Corner.bottomTrailing
+    private var contentResizeStartFrame: NSRect?
+    private var pendingCornerTranslation = CGSize.zero
     private weak var triggerView: NSView?
+
+    init(resizeScheduler: LitheDragUpdateScheduler = LitheDragUpdateScheduler()) {
+        contentResizeScheduler = resizeScheduler
+        super.init()
+    }
 
     func show(
         items: [LitheContextMenuItem],
@@ -579,9 +602,42 @@ final class LitheContextMenuPresenter: NSObject, NSWindowDelegate {
               appearance: NSAppearance?, opensUpward: Bool = false, searchOnTyping: Bool = false,
               parentWindow: NSWindow? = nil,
               trigger: NSView? = nil,
+              resizableWidth: CGFloat? = nil, minimumWidth: CGFloat = 0,
+              resizableHeight: CGFloat? = nil, minimumHeight: CGFloat = 0,
+              onSizeChanged: ((CGSize) -> Void)? = nil,
               onDismiss: @escaping () -> Void) {
         dismiss()
-        let panel = makePanel(contentController: contentController, appearance: appearance)
+        // Opted-in dropdowns keep native ownership of user dimensions and hit targets.
+        let container: NSViewController
+        if resizableWidth != nil {
+            container = NSViewController()
+            container.view = NSView(frame: contentController.view.frame)
+            container.view.autoresizingMask = [.width, .height]
+            container.addChild(contentController)
+            contentController.view.autoresizingMask = [.width, .height]
+            container.view.addSubview(contentController.view)
+        } else {
+            container = contentController
+        }
+        let panel = makePanel(contentController: container, appearance: appearance)
+        customContentController = contentController
+        contentWidth = resizableWidth.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        contentMinimumWidth = minimumWidth
+        contentSizeChanged = onSizeChanged
+        contentHeight = resizableHeight.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        contentMinimumHeight = minimumHeight
+        if let contentWidth {
+            panel.styleMask.insert(.resizable)
+            // Hosting's preferredContentSize installs a 501-priority ideal
+            // size. Required constraints preserve the dimensions the user owns.
+            contentWidthConstraint = container.view.widthAnchor.constraint(equalToConstant: contentWidth)
+            contentWidthConstraint?.isActive = true
+            if let contentHeight {
+                contentHeightConstraint = container.view.heightAnchor.constraint(equalToConstant: contentHeight)
+                contentHeightConstraint?.isActive = true
+            }
+        }
+
         panel.handleKey = { [weak self, weak panel] event in
             if event.keyCode == 53 {
                 self?.dismiss()
@@ -617,6 +673,89 @@ final class LitheContextMenuPresenter: NSObject, NSWindowDelegate {
         contentIsAnchored = parentWindow != nil
         parentWindow?.addChildWindow(panel, ordered: .above)
         resize(contentController: contentController)
+        if contentWidth != nil, let view = panel.contentView {
+            panel.acceptsMouseMovedEvents = true
+            panel.handleResizeCursor = { [weak self, weak panel] event in
+                guard let self, let view = panel?.contentView else { return }
+                let point = view.convert(event.locationInWindow, from: nil)
+                if let corner = self.contentCornerHandles.first(where: { $0.frame.contains(point) }) {
+                    corner.resizeCursor.set()
+                } else if self.contentResizeHandle?.frame.contains(point) == true {
+                    NSCursor.resizeLeftRight.set()
+                }
+            }
+            // Reuse the splitter's native hit target: borderless NSPanel does not
+            // provide an edge cursor/drag region merely from its resizable flag.
+            let handle = SplitHandleInteractionView(frame: NSRect(
+                x: view.bounds.width - SplitHandleView.hitThickness, y: 0,
+                width: SplitHandleView.hitThickness, height: view.bounds.height))
+            handle.autoresizingMask = [.minXMargin, .height]
+            handle.setAccessibilityElement(true)
+            handle.setAccessibilityRole(.splitter)
+            handle.setAccessibilityLabel(NSLocalizedString("Drag left or right to resize", comment: ""))
+            handle.onDragStarted = { [weak self, weak panel] in
+                self?.contentResizeStartWidth = panel?.frame.width
+            }
+            handle.onDragChanged = { [weak self] translation in
+                self?.contentResizeScheduler.submit(translation) { [weak self] value in self?.resizeContentWidth(by: value) }
+            }
+            handle.onDragEnded = { [weak self] translation in
+                guard let self else { return }
+                self.contentResizeScheduler.cancel()
+                self.resizeContentWidth(by: translation)
+                self.contentResizeStartWidth = nil
+                if let panel = self.panel {
+                    self.contentSizeChanged?(panel.frame.size)
+                }
+            }
+            view.addSubview(handle)
+            contentResizeHandle = handle
+            if minimumHeight > 0 {
+                for position in [ProjectReplacePanelGeometry.Corner.topTrailing, .bottomTrailing] {
+                    let corner = ProjectReplaceCornerHandleView(frame: NSRect(
+                        x: view.bounds.width - SplitHandleView.hitThickness,
+                        y: position.isTop ? view.bounds.height - SplitHandleView.hitThickness : 0,
+                        width: SplitHandleView.hitThickness, height: SplitHandleView.hitThickness))
+                    corner.corner = position
+                    corner.tracksInactiveWindows = true
+                    if #available(macOS 15.0, *) {
+                        corner.cursorOverride = NSCursor.frameResize(position: position.isTop ? .topRight : .bottomRight, directions: .all)
+                    }
+                    corner.autoresizingMask = position.isTop ? [.minXMargin, .minYMargin] : [.minXMargin, .maxYMargin]
+                    corner.setAccessibilityElement(true)
+                    corner.setAccessibilityRole(.splitter)
+                    corner.setAccessibilityLabel(NSLocalizedString("Drag corner to resize", comment: ""))
+                    corner.onStart = { [weak self, weak panel] in
+                        self?.contentResizeCorner = position
+                        self?.contentResizeStartFrame = panel?.frame
+                    }
+                    corner.onChange = { [weak self] translation in
+                        guard let self else { return }
+                        self.pendingCornerTranslation = translation
+                        // One queued delivery applies both axes using the latest screen delta.
+                        self.contentResizeScheduler.submit(0, minimumChange: 0) { [weak self] _ in
+                            guard let self else { return }
+                            self.resizeContentCorner(by: self.pendingCornerTranslation)
+                        }
+                    }
+                    corner.onEnd = { [weak self] translation in
+                        guard let self else { return }
+                        self.contentResizeScheduler.cancel()
+                        self.resizeContentCorner(by: translation)
+                        if position.isTop != self.contentIsAboveAnchor,
+                           let start = self.contentResizeStartFrame, let panel = self.panel {
+                            // Keep the released anchored edge when binding refresh lays out the popup again.
+                            self.contentAnchor?.y += self.contentIsAboveAnchor
+                                ? panel.frame.minY - start.minY : panel.frame.maxY - start.maxY
+                        }
+                        self.contentResizeStartFrame = nil
+                        if let panel = self.panel { self.contentSizeChanged?(panel.frame.size) }
+                    }
+                    view.addSubview(corner) // Above the right edge, so diagonal dragging wins here.
+                    contentCornerHandles.append(corner)
+                }
+            }
+        }
         installEventMonitors()
         panel.orderFrontRegardless()
         panel.makeKey()
@@ -624,7 +763,7 @@ final class LitheContextMenuPresenter: NSObject, NSWindowDelegate {
     }
 
     func resize(contentController: NSViewController) {
-        guard let panel, panel.contentViewController === contentController,
+        guard let panel, contentResizeStartWidth == nil, contentResizeStartFrame == nil, customContentController === contentController,
               let point = contentAnchor else { return }
         let screen = NSScreen.screens.first { $0.frame.contains(point) } ?? NSScreen.main
         let bounds = (screen?.visibleFrame ?? panel.frame).insetBy(dx: 6, dy: 6)
@@ -632,8 +771,12 @@ final class LitheContextMenuPresenter: NSObject, NSWindowDelegate {
         let preferred = contentController.preferredContentSize
         let fitting = preferred.width > 0 && preferred.height > 0
             ? preferred : contentController.view.fittingSize
-        let size = NSSize(width: min(fitting.width, bounds.width),
-                          height: min(fitting.height, bounds.height))
+        let size = NSSize(width: min(contentWidth.map { max($0, contentMinimumWidth) } ?? fitting.width, bounds.width),
+                          height: min(max(contentHeight ?? fitting.height, contentMinimumHeight), bounds.height))
+        if contentWidth != nil {
+            panel.contentMinSize = NSSize(width: min(contentMinimumWidth, bounds.width), height: contentMinimumHeight > 0 ? min(contentMinimumHeight, bounds.height) : size.height)
+            panel.contentMaxSize = NSSize(width: bounds.width, height: contentMinimumHeight > 0 ? bounds.height : size.height)
+        }
         // Keep app-owned dropdowns attached while there is room, then flip to
         // the other side before finally clamping an oversized panel on screen.
         let spaceBelow = point.y - bounds.minY
@@ -644,16 +787,19 @@ final class LitheContextMenuPresenter: NSObject, NSWindowDelegate {
             ? (contentOpensUpward ? (!fitsAbove && fitsBelow ? false : true)
                                    : (!fitsBelow && fitsAbove))
             : contentOpensUpward
+        contentIsAboveAnchor = opensAbove
         let y = opensAbove ? point.y : point.y - size.height
         let yOrigin = min(max(y, bounds.minY), bounds.maxY - size.height)
         let origin = NSPoint(x: min(max(point.x, bounds.minX), bounds.maxX - size.width),
                              y: yOrigin)
         let frame = NSRect(origin: origin, size: size)
+        contentWidthConstraint?.constant = size.width
+        contentHeightConstraint?.constant = size.height
         if panel.frame != frame { panel.setFrame(frame, display: true) }
     }
 
     func dismiss(contentController: NSViewController) {
-        guard panel?.contentViewController === contentController else { return }
+        guard customContentController === contentController else { return }
         dismiss()
     }
 
@@ -753,14 +899,66 @@ final class LitheContextMenuPresenter: NSObject, NSWindowDelegate {
 
     func dismiss() {
         removeEventMonitors()
+        contentResizeHandle?.removeFromSuperview()
+        contentResizeHandle = nil
+        contentCornerHandles.forEach { $0.endTracking(); $0.removeFromSuperview() }
+        contentCornerHandles.removeAll()
+        contentHeightConstraint?.isActive = false
+        contentHeightConstraint = nil
+        contentHeight = nil
+        contentMinimumHeight = 0
+        contentResizeStartFrame = nil
         triggerView = nil
         panel?.orderOut(nil)
         panel?.close()
         panel = nil
         contentAnchor = nil
+        customContentController = nil
+        contentWidthConstraint?.isActive = false
+        contentWidthConstraint = nil
+        contentWidth = nil
+        contentResizeStartWidth = nil
+        contentResizeScheduler.cancel()
+        contentSizeChanged = nil
         let dismissed = contentDismissed
         contentDismissed = nil
         dismissed?()
+    }
+
+    private func resizeContentWidth(by translation: CGFloat) {
+        guard let panel, let initialWidth = contentResizeStartWidth else { return }
+        let bounds = (panel.screen?.visibleFrame ?? panel.frame).insetBy(dx: 6, dy: 6)
+        let maximum = max(0, bounds.maxX - panel.frame.minX)
+        let width = min(max(initialWidth + translation, contentMinimumWidth), maximum)
+        guard width != panel.frame.width else { return }
+        contentWidth = width
+        var frame = panel.frame
+        frame.size.width = width
+        contentWidthConstraint?.constant = width
+        // AppKit redraws on its next display pass; do not synchronously flush every pointer update.
+        panel.setFrame(frame, display: false)
+    }
+
+    private func resizeContentCorner(by translation: CGSize) {
+        guard let panel, let start = contentResizeStartFrame, let view = panel.contentView else { return }
+        let bounds = (panel.screen?.visibleFrame ?? panel.frame).insetBy(dx: 6, dy: 6)
+        let width = min(max(start.width + translation.width, contentMinimumWidth), max(0, bounds.maxX - start.minX))
+        let isTop = contentResizeCorner.isTop
+        let availableHeight = isTop ? bounds.maxY - start.minY : start.maxY - bounds.minY
+        let height = min(max(start.height + (isTop ? -translation.height : translation.height), contentMinimumHeight),
+                         max(0, availableHeight))
+        let frame = NSRect(x: start.minX, y: isTop ? start.minY : start.maxY - height, width: width, height: height)
+        guard frame != panel.frame else { return }
+        contentWidth = width
+        contentHeight = height
+        contentWidthConstraint?.constant = width
+        if contentHeightConstraint == nil {
+            contentHeightConstraint = view.heightAnchor.constraint(equalToConstant: height)
+            contentHeightConstraint?.isActive = true
+        }
+        contentHeightConstraint?.constant = height
+        // AppKit redraws on its next display pass; do not synchronously flush every pointer update.
+        panel.setFrame(frame, display: false)
     }
 
     func windowDidResignKey(_ notification: Notification) {

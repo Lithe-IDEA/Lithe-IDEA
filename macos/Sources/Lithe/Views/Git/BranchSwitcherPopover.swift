@@ -3,11 +3,15 @@ import LitheGitModule
 
 struct BranchSwitcherPopover: View {
     enum Metrics {
+        // Community GitBranchesPopupBase: 300 + 8pt drag area + 2 × 2pt borders.
+        static let minimumHeight: CGFloat = 312
         static let popupWidth = LitheDropdownMetrics.branchMinimumWidth
         static let searchBarHeight: CGFloat = 48
         static let branchRowHeight = LitheDropdownMetrics.rowHeight
         static let branchGroupHeaderHeight: CGFloat = 24
         static let branchListHeight: CGFloat = 240
+        // Preserve the existing default height: five actions, two dividers and padding.
+        static let scrollAreaHeight = branchListHeight + 5 * branchRowHeight + 22
     }
 
     @ObservedObject var feature: GitFeatureModel
@@ -31,11 +35,17 @@ struct BranchSwitcherPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             searchBar
-            actions
-            popupDivider
-            branchList
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    actions
+                    popupDivider
+                    branchList
+                }
+            }
+            .frame(minHeight: Metrics.branchRowHeight, idealHeight: Metrics.scrollAreaHeight, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(width: Metrics.popupWidth, alignment: .leading)
+        .frame(minWidth: Metrics.popupWidth, maxWidth: .infinity, alignment: .leading)
         .task {
             expandedRecentGroups = Set(recentNamespaceGroups.map(\.id))
         }
@@ -139,43 +149,39 @@ struct BranchSwitcherPopover: View {
     }
 
     private var branchList: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if filteredReferences.isEmpty {
-                    Text(LocalizedStringKey(feature.isLoadingGitHistory ? "Loading branches…" : "No matching branches"))
-                        .font(LitheTheme.uiFont)
-                        .foregroundStyle(LitheTheme.secondaryText)
-                        .frame(maxWidth: .infinity, minHeight: Metrics.branchRowHeight)
-                } else if normalizedQuery.isEmpty {
-                    if !recentReferences.isEmpty {
-                        branchSectionHeader("Recent")
-                        if !collapsedSections.contains("Recent") {
-                            ForEach(recentReferenceRows.filter { localNamespace(for: $0.reference) == nil }) { row in
-                                branchRow(row.reference, indented: true, presentation: .recent)
-                            }
-                            ForEach(recentNamespaceGroups) { group in
-                                namespaceRow(group, expandedGroups: $expandedRecentGroups)
-                                if expandedRecentGroups.contains(group.id) {
-                                    ForEach(group.rows) { row in
-                                        branchRow(row.reference, indented: true, presentation: .namespaceChild)
-                                    }
+        LazyVStack(alignment: .leading, spacing: 0) {
+            if filteredReferences.isEmpty {
+                Text(LocalizedStringKey(feature.isLoadingGitHistory ? "Loading branches…" : "No matching branches"))
+                    .font(LitheTheme.uiFont)
+                    .foregroundStyle(LitheTheme.secondaryText)
+                    .frame(maxWidth: .infinity, minHeight: Metrics.branchRowHeight)
+            } else if normalizedQuery.isEmpty {
+                if !recentReferences.isEmpty {
+                    branchSectionHeader("Recent")
+                    if !collapsedSections.contains("Recent") {
+                        ForEach(recentReferenceRows.filter { localNamespace(for: $0.reference) == nil }) { row in
+                            branchRow(row.reference, indented: true, presentation: .recent)
+                        }
+                        ForEach(recentNamespaceGroups) { group in
+                            namespaceRow(group, expandedGroups: $expandedRecentGroups)
+                            if expandedRecentGroups.contains(group.id) {
+                                ForEach(group.rows) { row in
+                                    branchRow(row.reference, indented: true, presentation: .namespaceChild)
                                 }
                             }
                         }
                     }
-                    groupedBranchRows
-                } else {
-                    // Filtering searches every section without losing its expansion state.
-                    ForEach(searchResultRows) { row in
-                        branchRow(row.reference, indented: false, presentation: .searchResult)
-                    }
+                }
+                groupedBranchRows
+            } else {
+                // Filtering searches every section without losing its expansion state.
+                ForEach(searchResultRows) { row in
+                    branchRow(row.reference, indented: false, presentation: .searchResult)
                 }
             }
-            .padding(.horizontal, LitheDropdownMetrics.popupPadding)
-            .padding(.vertical, LitheDropdownMetrics.popupPadding)
         }
-        .frame(height: Metrics.branchListHeight)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, LitheDropdownMetrics.popupPadding)
+        .padding(.vertical, LitheDropdownMetrics.popupPadding)
     }
 
     private func actionRow(
@@ -304,21 +310,28 @@ struct BranchSwitcherPopover: View {
         presentation: BranchRowPresentation
     ) -> some View {
         return BranchActionMenuRow(
-            label: {
+            accessibilityTitle: branchRowAccessibilityTitle(reference),
+            label: { expanded, highlighted in
                 HStack(spacing: 8) {
                     LitheIDEAIcon(resourcePath: referenceIcon(reference), size: LitheDropdownMetrics.iconSize,
                                   preservesOriginalColors: true)
-                    Text(branchDisplayName(reference, presentation: presentation))
+                    Text(verbatim: branchDisplayName(reference, presentation: presentation))
                         .font(LitheTheme.uiFont(size: 12.5))
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .fixedSize(horizontal: expanded, vertical: true)
+                        .layoutPriority(1)
+                    if reference.kind == .local, reference.upstreamShortName != nil {
+                        BranchPopupTrackingCounts(ahead: reference.ahead, behind: reference.behind)
+                    }
                     Spacer(minLength: 10)
                     if let upstream = reference.upstreamShortName {
-                        Text(upstream)
+                        Text(verbatim: upstream)
                             .font(LitheTheme.uiFont(size: LitheDropdownMetrics.fontSize))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(highlighted ? LitheTheme.settingsSelectionText : Color(nsColor: .gray))
                             .lineLimit(1)
-                            .truncationMode(.middle)
+                            .truncationMode(.tail)
+                            .fixedSize(horizontal: expanded, vertical: true)
                     }
                     LitheIDEAIcon(resourcePath: "expui/general/chevronRight.svg", size: LitheDropdownMetrics.iconSize,
                                   preservesOriginalColors: true)
@@ -329,20 +342,18 @@ struct BranchSwitcherPopover: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: Metrics.branchRowHeight)
                 .contentShape(Rectangle())
-                // Branch and upstream names are truncated to keep the row width
-                // fixed, so the untruncated pair is only reachable on hover.
-                .help(branchRowTooltip(reference))
             },
             menuContent: { branchActionMenu(for: reference) }
         )
         .disabled(feature.isPerformingBranchOperation)
     }
 
-    /// The full branch name, plus its upstream when tracked, for rows whose text
-    /// the fixed popup width truncates.
-    private func branchRowTooltip(_ reference: GitReference) -> String {
+    /// VoiceOver exposes both full names even when the visible labels are clipped.
+    private func branchRowAccessibilityTitle(_ reference: GitReference) -> String {
         guard let upstream = reference.upstreamShortName else { return reference.shortName }
         return "\(reference.shortName) → \(upstream)"
+            + (reference.behind > 0 ? " ↓\(reference.behind)" : "")
+            + (reference.ahead > 0 ? " ↑\(reference.ahead)" : "")
     }
 
     /// The per-reference action list, ordered like IDEA's branch menu: creation
@@ -544,18 +555,18 @@ struct BranchSwitcherPopover: View {
 
 /// A branch row opens its actions in the shared product dropdown.
 private struct BranchActionMenuRow<Label: View>: View {
-    @ViewBuilder let label: () -> Label
+    @State private var isPresented = false
+    let accessibilityTitle: String
+    @ViewBuilder let label: (Bool, Bool) -> Label
     @LitheMenuItemsBuilder let menuContent: () -> [LitheContextMenuItem]
 
     var body: some View {
-        LitheMenu(opensToSide: true) {
-            menuContent()
-        } label: {
-            label()
-        }
-        .buttonStyle(LitheDropdownRowStyle())
-        // Constrain to the list width so the menu button does not stretch.
-        .fixedSize(horizontal: false, vertical: true)
+        BranchPopupRowView(isPresented: isPresented, accessibilityTitle: accessibilityTitle,
+                       onPress: { isPresented.toggle() }, label: label)
+            .overlay {
+                LitheDropdownPopover(opensToSide: true, isPresented: $isPresented, items: menuContent()) { EmptyView() }
+            }
+            .frame(height: LitheDropdownMetrics.rowHeight)
     }
 }
 

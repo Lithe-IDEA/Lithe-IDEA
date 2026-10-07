@@ -291,12 +291,16 @@ export const SidebarPaneSelector = ({
         disabled={item.disabled}
         aria-label={item.ariaLabel}
         aria-current={item.isActive ? "page" : undefined}
-        className={
+        className={cn(
           showLabels
             ? "ui-text-sm min-h-6 py-1"
             : // IntelliJ Islands stripe button: a 30x30 highlight with a 12px arc (6px radius).
-              "ui-text-sm mx-auto size-[30px] min-h-[30px] shrink-0 rounded-[6px] p-0"
-        }
+              "ui-text-sm mx-auto size-[30px] min-h-[30px] shrink-0 rounded-[6px] p-0",
+          item.isActive && !item.disabled &&
+            (item.id === "files" || item.id === "git" ||
+              SIDEBAR_BOTTOM_ACTIVITY_ITEM_IDS.some((id) => id === item.id)) &&
+            "lithe-left-activity-selected",
+        )}
       >
         {item.label ?? item.ariaLabel ?? item.id}
       </SidebarListItem>

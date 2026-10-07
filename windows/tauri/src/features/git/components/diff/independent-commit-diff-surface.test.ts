@@ -43,6 +43,7 @@ function fixture(
     options: any;
     findCalls: number;
     revealed: number[];
+    focusCalls: number;
   }> = [];
   const runtime = {
     Uri: { parse: (uri: string) => uri },
@@ -84,6 +85,7 @@ function fixture(
           width: 0,
           height: 0,
           caret: 1,
+          focusCalls: 0,
           selection: null as unknown,
           subscriptions: new Map<string, Set<(event: any) => void>>(),
           items: [] as monaco.editor.IModelDeltaDecoration[],
@@ -164,7 +166,7 @@ function fixture(
           setSelection: (selection: any) => {
             state.selection = selection;
           },
-          focus: () => emit("focus"),
+          focus: () => { state.focusCalls++; emit("focus"); },
           revealLineInCenter: (line: number) => {
             state.revealed.push(line);
           },
@@ -510,6 +512,17 @@ test("explicit difference navigation reveals both boundaries before resuming ver
   expect(f.viewStates.map((state) => state.revealed)).toEqual([[6], [6]]);
   owner!.views[0].setScrollTop(80);
   expect(f.viewStates.map((state) => state.top)).toEqual([80, 278]);
+});
+
+test("Passive preview positions the first difference without taking focus; explicit navigation still focuses", async () => {
+  const f = fixture();
+  await owner!.update(f.rows, "plaintext", false, false);
+  const change = owner!.plan.changes[0];
+  owner!.reveal(change, false);
+  expect(f.viewStates.map((state) => state.revealed)).toEqual([[6], [6]]);
+  expect(f.viewStates.map((state) => state.focusCalls)).toEqual([0, 0]);
+  owner!.reveal(change);
+  expect(f.viewStates.reduce((count, state) => count + state.focusCalls, 0)).toBe(1);
 });
 test("central number selection retains its initial anchor through reverse Shift-clicks", async () => {
   const f = fixture();

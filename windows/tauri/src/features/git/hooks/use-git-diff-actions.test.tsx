@@ -33,9 +33,10 @@ const spies: Array<{ mockRestore(): void }> = [];
 const pending = new Map<string, () => void>();
 const requests: Promise<void>[] = [];
 
-function Harness({ repo, files = [] }: { repo: string; files?: GitFile[] }) {
+function Harness({ repo, files = [], previewScope = null }: { repo: string; files?: GitFile[]; previewScope?: string | null }) {
   actions = useGitDiffActions({
     activeRepoPath: repo,
+    commitPreviewScope: previewScope,
     commitByHash: commits,
     gitFileByPath: new Map(files.map(file => [file.path, file])),
     workingTreeDiffEntriesByScope: { all: files.map(file => [`unstaged:${file.path}`, file]), staged: [], unstaged: [] },
@@ -123,6 +124,13 @@ test("opens the selected commit diff with its loaded message", async () => {
     repoPath: "C:/repo-a",
   });
   expect(actions.isLoadingCommitDiff).toBe(false);
+  expect(openBuffer.mock.calls[0]?.[7]).not.toHaveProperty("preserveFocus");
+});
+
+test("Automatic commit preview opens its first file without requesting editor focus", async () => {
+  await act(async () => root.render(<LocaleProvider language="en-US"><Harness repo="C:/repo-a" previewScope="commit:first" /></LocaleProvider>));
+  await act(async () => { await actions.previewCommitFileDiff({ kind: "commit", commit: commit("first") }, "file.txt"); });
+  expect(openBuffer.mock.calls[0]?.[7]).toMatchObject({ commitFilePreview: true, preserveFocus: true });
 });
 test("late message cannot open an old diff or clear the newer loading state", async () => {
   await render();

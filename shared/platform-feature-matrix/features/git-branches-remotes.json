@@ -12,11 +12,23 @@
   },
   "windows": {
     "evidence": [
-      "windows/tauri/src/features/git"
+      "windows/tauri/src/features/git",
+      "windows/tauri/src/features/git/components/git-fetch-status.tsx",
+      "windows/tauri/src/features/git/services/git-fetch-progress.test.ts",
+      "windows/tauri/src/features/git/components/git-fetch-status.test.tsx",
+      "windows/tauri/src/features/git/stores/git-fetch-progress.integration.test.ts",
+      "windows/tauri/src/features/layout/components/footer/footer.tsx",
+      "windows/tauri/src/features/git/services/git-log-branch-update.ts",
+      "windows/tauri/src/features/git/services/git-log-branch-update.test.ts",
+      "windows/tauri/src/features/git/components/log/git-log-branch-actions.test.tsx",
+      "rust/lithe-core/src/git/mod.rs",
+      "rust/lithe-core/src/tests/git_repository_setup.rs",
+      "shared/fixtures/git/write.json"
     ],
     "implementationStatus": "implemented",
     "verificationStatus": "pending"
   },
   "owner": "Git",
-  "verification": "创建、切换、合并分支并查看标签和远程，确认冲突与认证失败可恢复。"
+  "verification": "创建、切换、合并分支并查看标签和远程，确认冲突与认证失败可恢复。Windows Git Log 普通 Fetch 和 Fetch 选项执行后保持当前页签，底部状态栏显示等待或真实阶段进度；连接等待、认证、多个远程切换不沿用旧百分比，成功、失败、取消和预检查失败均收起；Console 仍保留命令与输出。核对中英文、明暗主题与窄窗口。 Windows Git Log 普通 Checkout 不再二次确认，仍阻止覆盖本地修改；Update Selected 按跟踪分支配置启用，不依赖缓存 behind。当前分支后台 Merge，未检出分支原地快进，其他 worktree 内仅快进；不打开 Pull 弹窗，分叉/脏工作区保留本地内容并报告失败，仓库或工作区切换后迟到结果不得刷新或解锁新请求。 Windows Update Selected 在 Fetch 等待期间及预检后切换目标 worktree 的分支，或分离 HEAD，应返回 state-changed，不执行新分支的 Pull；Core 在执行前校验完整 expectedBranch，省略时保留兼容行为。 带 expectedBranch 的后台更新整合已 Fetch 的固定 upstream 提交，不再次执行 pull/fetch；验证 Merge、仅快进和 Rebase 策略，普通 Pull 省略字段时保持原行为。",
+  "notes": "2026-10-06：用户确认 PR #1083 涉及的 Windows 功能改动均已完成实机测试，未发现问题；实机验收依据为用户反馈。"
 }

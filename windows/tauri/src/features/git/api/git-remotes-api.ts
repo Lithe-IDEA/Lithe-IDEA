@@ -130,10 +130,14 @@ export const getPullPreflight = async (repoPath: string): Promise<GitPullPreflig
 export const executePullChanges = async (
   repoPath: string,
   strategy: PullStrategy,
+  expectedBranch?: string,
 ): Promise<GitRemoteActionResult> => {
   try {
     const resolvedRepoPath = await resolveRepositoryPathOrThrow(repoPath);
-    await tauriInvoke("git_pull", { repoPath: resolvedRepoPath, mode: strategy });
+    await tauriInvoke("git_pull", {
+      repoPath: resolvedRepoPath, mode: strategy,
+      ...(expectedBranch ? { expectedBranch } : {}),
+    });
     return { success: true };
   } catch (error) {
     console.error("Failed to pull changes:", error);
@@ -197,10 +201,10 @@ export const getGitPullWorkflow = (repoPath: string): GitPullWorkflow => {
   const workflow = new GitPullWorkflow({
     fetch: fetchChanges,
     preflight: getPullPreflight,
-    pull: (repoPath, strategy, reference) =>
+    pull: (repoPath, strategy, reference, expectedBranch) =>
       reference
         ? pullReferenceIntoCurrent(repoPath, strategy, reference)
-        : executePullChanges(repoPath, strategy),
+        : executePullChanges(repoPath, strategy, expectedBranch),
     operationState: getOperationState,
   });
   pullWorkflows.set(repoPath, workflow);

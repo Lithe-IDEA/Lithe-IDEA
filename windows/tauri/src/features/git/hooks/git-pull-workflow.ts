@@ -19,6 +19,7 @@ export interface GitPullWorkflowDependencies {
     repoPath: string,
     strategy: PullStrategy,
     reference?: GitReference,
+    expectedBranch?: string,
   ) => Promise<RemoteActionResult>;
   operationState: (repoPath: string) => Promise<GitOperationState | null>;
 }
@@ -26,13 +27,18 @@ export interface GitPullWorkflowDependencies {
 export interface GitPullWorkflowOptions {
   refresh: () => Promise<void>;
   /**
-   * Strategy confirmed in the Pull dialog. When present the divergent-history
-   * prompt is skipped because the user already chose explicitly; a fast-forward
-   * strategy on divergent history still falls back to the prompt as a safety net.
+   * Strategy confirmed in Pull or selected by a background update. Merge/rebase
+   * skips the divergent-history prompt; ffOnly may prompt unless explicitly disabled.
    */
   strategy?: PullStrategy;
   /** Remote branch to pull into the current branch instead of the configured upstream. */
   reference?: GitReference;
+  /** Background fast-forward updates must fail rather than wait for a dialog host. */
+  allowStrategyPrompt?: boolean;
+  /** Complete local ref selected by a background update, not a new Pull source. */
+  expectedBranch?: string;
+  /** Revalidate that the worktree still has the selected branch checked out. */
+  validateBranch?: () => Promise<boolean>;
 }
 
 export interface GitPullWorkflowSnapshot {
@@ -93,6 +99,10 @@ export class GitPullWorkflow {
         };
       }
 
+      if (options.validateBranch && !(await options.validateBranch())) {
+        return { status: "blocked", reason: "state-changed" };
+      }
+
       let preflight: GitPullPreflight;
       try {
         preflight = await this.dependencies.preflight(repoPath);
@@ -130,9 +140,16 @@ export class GitPullWorkflow {
       }
 
       let strategy: PullStrategy = options.strategy ?? "ffOnly";
-      // A user-chosen merge/rebase already resolved divergence; only a missing
-      // choice or a fast-forward strategy still requires the explicit prompt.
+      // Merge/rebase has a selected policy. Background fast-forward updates fail
+      // on divergence; interactive Pull can still ask the user to choose.
       if (preflight.diverged && (!options.strategy || options.strategy === "ffOnly")) {
+        if (options.allowStrategyPrompt === false) {
+          return {
+            status: "failed",
+            stage: "pull",
+            error: "The selected branch cannot be fast-forwarded",
+          };
+        }
         const selectedStrategy = await this.waitForStrategy(preflight);
         if (!selectedStrategy) {
           return { status: "cancelled" };
@@ -170,7 +187,10 @@ export class GitPullWorkflow {
         strategy = selectedStrategy;
       }
 
-      const pulled = await this.dependencies.pull(repoPath, strategy, options.reference);
+      if (options.validateBranch && !(await options.validateBranch())) {
+        return { status: "blocked", reason: "state-changed" };
+      }
+      const pulled = await this.dependencies.pull(repoPath, strategy, options.reference, options.expectedBranch);
       if (pulled.success) {
         return { status: "pulled", strategy };
       }

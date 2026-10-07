@@ -468,6 +468,11 @@ pub struct GitWriteRequest {
     /// Operation-specific strategy, such as reset mode or pull reconciliation.
     #[serde(default)]
     pub mode: Option<String>,
+    /// Complete local branch ref for a background update after Fetch. The guarded
+    /// path integrates its fetched upstream without a second network wait.
+    /// Omission preserves interactive Pull compatibility.
+    #[serde(default)]
+    pub expected_branch: Option<String>,
     #[serde(default)]
     pub include_untracked: bool,
     #[serde(default)]
@@ -939,6 +944,12 @@ fn write_with_trace(request: GitWriteRequest) -> Result<GitCommandResponse, Core
             "Submodule publication checks require a push operation",
         ));
     }
+    if request.expected_branch.is_some() && request.operation != "pull" {
+        return Err(CoreError::new(
+            ErrorCode::InvalidRequest,
+            "Branch preconditions require a pull operation",
+        ));
+    }
     if request.operation != "commit"
         && (!request.gitlink_updates.is_empty()
             || (request.expected_commit_state.is_some() && request.operation != "push"))
@@ -1222,6 +1233,83 @@ fn write_with_trace(request: GitWriteRequest) -> Result<GitCommandResponse, Core
         // divergent history should be merged or replayed. Absent a choice we stay on
         // `--ff-only`, which refuses rather than inventing a merge commit.
         "pull" => {
+            if let Some(expected) = request.expected_branch.as_deref() {
+                if !expected.starts_with("refs/heads/") || expected == "refs/heads/" {
+                    return Err(CoreError::new(
+                        ErrorCode::InvalidRequest,
+                        "Expected branch must be a complete local reference",
+                    ));
+                }
+                // Repeat the frontend's post-Fetch check under the shared writer
+                // lease. A changed checkout must never update its replacement.
+                let current = execute_git(
+                    &root,
+                    &["symbolic-ref".into(), "--quiet".into(), "HEAD".into()],
+                    None,
+                )?;
+                if current.exit_code != 0 || current.output.trim() != expected {
+                    return Err(CoreError::new(
+                        ErrorCode::InvalidRequest,
+                        "The selected branch changed; review and retry",
+                    ));
+                }
+                if request.auto_stash
+                    || request.reference.is_some()
+                    || request.git_reference.is_some()
+                {
+                    return Err(CoreError::new(
+                        ErrorCode::InvalidRequest,
+                        "Guarded background updates use the fetched upstream without auto-stash",
+                    ));
+                }
+                // The host already fetched. Freeze the selected branch's upstream
+                // commit and integrate locally; `git pull` would fetch again and
+                // reopen a long window for an external client to switch HEAD.
+                let upstream = execute_git(
+                    &root,
+                    &[
+                        "rev-parse".into(),
+                        "--verify".into(),
+                        // Git's upstream selector takes a branch name, while the
+                        // checkout guards above/below compare complete refs.
+                        format!(
+                            "{}@{{upstream}}^{{commit}}",
+                            expected.strip_prefix("refs/heads/").unwrap()
+                        ),
+                    ],
+                    None,
+                )?;
+                if upstream.exit_code != 0 {
+                    return Err(CoreError::new(
+                        ErrorCode::InvalidRequest,
+                        "The selected branch has no fetched upstream commit",
+                    ));
+                }
+                let revision = upstream.stdout.trim().to_owned();
+                arguments = match request.mode.as_deref() {
+                    None | Some("ffOnly") => vec!["merge".into(), "--ff-only".into(), revision],
+                    Some("merge") => vec!["merge".into(), "--no-edit".into(), revision],
+                    Some("rebase") => vec!["rebase".into(), revision],
+                    Some(other) => {
+                        return Err(CoreError::new(
+                            ErrorCode::InvalidRequest,
+                            format!("Unknown pull strategy '{other}'"),
+                        ))
+                    }
+                };
+                let current = execute_git(
+                    &root,
+                    &["symbolic-ref".into(), "--quiet".into(), "HEAD".into()],
+                    None,
+                )?;
+                if current.exit_code != 0 || current.output.trim() != expected {
+                    return Err(CoreError::new(
+                        ErrorCode::InvalidRequest,
+                        "The selected branch changed; review and retry",
+                    ));
+                }
+                return execute_git(&root, &arguments, None);
+            }
             arguments = match request.mode.as_deref() {
                 None | Some("ffOnly") => vec!["pull".into(), "--ff-only".into()],
                 Some("merge") => vec!["pull".into(), "--no-rebase".into(), "--no-edit".into()],

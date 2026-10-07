@@ -663,7 +663,10 @@ const GitBranchManager = ({
           <GitBranchIcon className="size-4 shrink-0" />
         )}
         <span
-          className="min-w-0 truncate font-normal"
+          className={cn(
+            "min-w-0 truncate font-normal",
+            triggerSurface === "toolbar" && "text-foreground",
+          )}
           style={{ maxWidth: `${triggerTextWidthCh}ch` }}
         >
           {currentBranch}

@@ -24,6 +24,24 @@ Islands 的精确色值只写在 Lithe 主题 `lithe.json` 里，其他主题只
 
 ### 尺寸换算
 
+左上角 Project、Commit 和左下角 Run、Terminal、Problems、Git Log 的当前选中入口使用独立的
+`stripe-selected-background` / `stripe-selected-foreground` 主题色。来源是
+IntelliJ Community `fb72b4df43aba102479eb0502d20b03586b9c5b8` 的
+`platform/platform-impl/src/com/intellij/openapi/wm/impl/SquareStripeButtonLook.kt`
+和 `platform/platform-resources/src/themes/islands/ManyIslandsDark.theme.json`、
+`ManyIslandsLight.theme.json`：`ToolWindow.Button.selectedBackground` 对应
+`toolbar-selected-bg-active`，深浅主题均为 `#3871E1`，前景为白色。
+Lithe 使用已有侧栏和 bottom-pane 的选中状态，不新增工具窗口焦点状态机。
+
+只在这些左侧工具窗口入口选中且可用时添加背景，保留 30px 点击区、6px 圆角、
+20px 原始图标以及现有打开/关闭行为。Islands 下用 CSS 将这些无背景的 SVG
+轮廓变白，对应上游 `toStrokeIcon`；不改原始图标或通用列表项，未选中和其他
+主题保留原始图标颜色。其他主题的背景与文字从自己的 primary 色推导，
+不能全局写死 Islands 蓝色。
+
+Project 和 Commit 沿用 IDEA 的 `expui/toolwindows/project@20x20.svg`、
+`expui/toolwindows/commit@20x20.svg` 及深色版本，只调整选中配色；Search 入口不变。
+
 IntelliJ 用 Java2D 的 `arc`（圆角直径）描述圆角：卡片 `Island.arc 20` 对应 10px（变量 `--lithe-island-radius`），编辑器标签 `arc 12` 对应 6px，按钮和输入框 `Button.arc` / `Component.arc 8` 对应 4px。
 
 ### 编辑器标签
@@ -34,6 +52,13 @@ IntelliJ 用 Java2D 的 `arc`（圆角直径）描述圆角：卡片 `Island.arc
 - 从提交面板打开的工作区差异会带上 `MultiFileDiff.commitPreview` 标记，标签标题显示“提交: 文件名”。编辑器 gutter（行号旁的改动标记栏）打开的是整文件差异，和 IntelliJ 的 “Diff for Range” 含义不同，所以不带这个标记，标题保持“未提交的更改”。重建差异数据（逐步加载、刷新）时必须沿用这个标记。
 
 ### 窗口失焦
+
+主工具栏的项目名与分支名使用主题主文字色 `foreground`，不继承 ghost 按钮的
+次要文字色。来源是 IntelliJ Community `fb72b4df43aba102479eb0502d20b03586b9c5b8`
+的 `platform/platform-impl/src/com/intellij/ide/ui/laf/darcula/ui/AbstractToolbarComboUI.kt`：
+`MainToolbar.Dropdown.foreground` 默认回退到 `JBColor.foreground()`。
+只调整这两个标题栏文字，保留图标、箭头、字重、其他分支入口和第三方主题自身色值。
+不要通过写死白色或修改通用 ghost 按钮来实现，否则浅色主题及其他控件会受影响。
 
 只让外框变淡，透明度 0.56：标题栏、多项目标签栏、侧边按钮条和状态栏。编辑器和工具窗口内容保持不透明，与 IntelliJ 只对外框组件启用 `IslandsInactiveFrameGraphics2D` 的范围一致。
 焦点状态来自 Tauri 的 `onFocusChanged`，启动时用 `isFocused()` 初始化。

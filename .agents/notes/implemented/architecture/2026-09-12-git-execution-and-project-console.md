@@ -108,6 +108,21 @@ prune、仓库覆盖关闭时，重置提示应为开启；子模块只有选择
 普通 Fetch 仍是一项直接操作，可选的设置预览留在现有 Git 菜单中。控制台
 页签不增加 Fetch 按钮，也不把预览变成普通操作的必经确认步骤。
 
+Windows Git Log 点击普通 Fetch 或提交 Fetch 选项后保持当前页签，底部状态栏
+显示后台进度。参考 IntelliJ Community `fb72b4df43aba102479eb0502d20b03586b9c5b8`
+的 `plugins/git4idea/backend/src/actions/GitFetch.java` 后台任务，以及
+`platform/platform-impl/src/com/intellij/openapi/wm/impl/status/InfoAndProgressPanel.kt`
+紧凑状态栏：进度条宽 104，旁边显示任务文字；条高沿用共享 Progress 的 4px。
+不自动打开 Console，避免打断用户查看提交；实际命令和输出仍由项目控制台保留。
+
+状态栏复用应用生命周期内的 Git 执行事件和现有 100ms 输出合批。请求开始就
+显示未知进度，收到结构化阶段百分比才显示对应数值；多个远程或阶段的百分比
+不能当作整体进度。子进程结束、认证等待或切换到下个远程时回到未知进度，
+直到整个请求结束才移除；预检查失败和取消同样移除。按请求和子进程标识
+忽略迟到输出，不从可清空、可截断的历史记录反推活动状态，也不让状态栏
+组件的卸载中断进度追踪。多个仓库同时 Fetch 时显示最新任务和活动数量，
+不平均各仓库的百分比。无百分比时只用 CSS 动画，不增加前端轮询或定时器。
+
 ### 项目控制台保留原文与取消能力
 
 历史属于项目窗口，切换仓库或打开关联工作树不会隐藏之前的操作。内部状态、
@@ -162,6 +177,12 @@ stdout/stderr 分开，复制原始输出时不混入提示。没有完整变化
 控制台不能承担完整审计存档。
 
 ## 验证
+
+- `./.agents/skills/write-stable-tests/scripts/test-stability-windows.ps1 -Scope Frontend -FrontendTestPath src/features/git/services/git-fetch-progress.test.ts,src/features/git/components/git-fetch-status.test.tsx,src/features/git/stores/git-fetch-progress.integration.test.ts`
+
+Fetch 状态回归覆盖无输出等待、阶段切换、认证、并发仓库、迟到事件、预检查
+失败、取消和状态栏重新挂载；原生验收需要实际 Windows 产品核对 Fetch 后
+仍停留在 Git Log、底部进度变化和完成后收起。
 
 - `./.agents/skills/write-stable-tests/scripts/verify-test-stability.sh`
 - `./scripts/verify-rust-core-comments.sh`

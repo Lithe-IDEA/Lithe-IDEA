@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { useGitLogPreferencesStore } from "./git-log-preferences.store";
 
 describe("Git Log preferences", () => {
-  test("shows worktree repositories by default", () => {
+  test("shows worktree repositories and collapses tags by default", () => {
     expect(useGitLogPreferencesStore.getState().showWorktreeRepositories).toBe(true);
+    expect(useGitLogPreferencesStore.getState().collapsedReferenceSections).toEqual(["tag"]);
   });
 
   test("persists read-only view preferences through focused actions", () => {
@@ -29,7 +30,7 @@ describe("Git Log preferences", () => {
       showWorktreeRepositories: false,
       mainPanelLayout: { references: 20, commits: 55, inspector: 25 },
       inspectorPanelLayout: { files: 70, details: 30 },
-      collapsedReferenceSections: ["remote"],
+      collapsedReferenceSections: ["tag", "remote"],
       collapsedReferenceGroups: ["remote:origin"],
       markedReferenceFullNamesByRepository: {
         [repoPath]: ["refs/heads/main"],
@@ -49,7 +50,7 @@ describe("Git Log preferences", () => {
     actions.setShowWorktreeRepositories(true);
     actions.setMainPanelLayout({ references: 19, commits: 57, inspector: 24 });
     actions.setInspectorPanelLayout({ files: 62, details: 38 });
-    actions.setReferenceExpansion([], []);
+    actions.setReferenceExpansion(["tag"], []);
     actions.toggleMarkedReference(repoPath, "refs/heads/main");
   });
 

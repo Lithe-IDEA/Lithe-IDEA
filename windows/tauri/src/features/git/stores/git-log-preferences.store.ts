@@ -79,7 +79,7 @@ const useGitLogPreferencesStoreBase = create<GitLogPreferencesStore>()(
       inspectorPanelLayout: DEFAULT_INSPECTOR_LAYOUT,
       authorColumnWidth: GIT_LOG_COLUMN_DEFAULT_WIDTHS.author,
       dateColumnWidth: GIT_LOG_COLUMN_DEFAULT_WIDTHS.date,
-      collapsedReferenceSections: [],
+      collapsedReferenceSections: ["tag"],
       collapsedReferenceGroups: [],
       markedReferenceFullNamesByRepository: {},
       actions: {

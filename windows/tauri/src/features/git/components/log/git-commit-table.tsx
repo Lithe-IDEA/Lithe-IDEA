@@ -21,6 +21,7 @@ import {
   GitMergeIcon as Squash,
   MagnifyingGlassIcon as Search,
   PencilIcon as Edit,
+  TagIcon,
   TrashIcon as Trash,
   XIcon,
 } from "@/ui/icons";
@@ -70,6 +71,7 @@ export function GitCommitTable({
   onReset,
   onCherryPick,
   onRevert,
+  onCreateTag,
   onLoadMore,
 }: {
   commits: GitCommit[];
@@ -99,6 +101,7 @@ export function GitCommitTable({
   onReset: (commit: GitCommit) => void;
   onCherryPick: (commit: GitCommit) => void;
   onRevert: (commit: GitCommit) => void;
+  onCreateTag: (commit: GitCommit) => void;
   onLoadMore: () => void;
 }) {
   const { t } = useTranslation();
@@ -161,18 +164,26 @@ export function GitCommitTable({
     const nextIndex = Math.max(0, Math.min(index, visibleRows.length - 1));
     const nextCommit = visibleRows[nextIndex]?.commit;
     if (!nextCommit) return;
+    scrollRef.current?.focus({ preventScroll: true });
     onSelect(nextCommit, visibleCommitHashes, options);
     virtualizer.scrollToIndex(nextIndex, { align: "auto" });
-    globalThis.requestAnimationFrame?.(() => {
-      scrollRef.current
-        ?.querySelector<HTMLElement>(`[data-git-commit-index="${nextIndex}"]`)
-        ?.focus();
-    });
   };
 
-  const handleRowKeyDown = (event: React.KeyboardEvent, commit: GitCommit) => {
-    const currentIndex = visibleRows.findIndex((row) => row.commit.hash === commit.hash);
-    if (currentIndex < 0) return;
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    const target = event.target as HTMLElement;
+    // Context-menu portals and embedded controls retain their own keyboard actions.
+    if (
+      !scrollRef.current?.contains(target) ||
+      target.closest("button, input, select, textarea")
+    ) return;
+    const currentIndex = visibleRows.findIndex((row) => row.commit.hash === selectedCommit?.hash);
+
+    if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+      event.preventDefault();
+      event.stopPropagation();
+      openSelectedCommitMenu();
+      return;
+    }
 
     switch (event.key) {
       case "ArrowDown":
@@ -184,7 +195,7 @@ export function GitCommitTable({
         break;
       case "ArrowUp":
         event.preventDefault();
-        selectRowAt(currentIndex - 1, {
+        selectRowAt(Math.max(0, currentIndex - 1), {
           additive: event.ctrlKey || event.metaKey,
           range: event.shiftKey,
         });
@@ -198,10 +209,29 @@ export function GitCommitTable({
         selectRowAt(visibleRows.length - 1);
         break;
       case "Enter":
-        event.preventDefault();
-        onOpenDiff(commit);
+        if (currentIndex >= 0) {
+          event.preventDefault();
+          onOpenDiff(visibleRows[currentIndex]!.commit);
+        }
         break;
     }
+  };
+
+  const openSelectedCommitMenu = () => {
+    const index = visibleRows.findIndex((row) => row.commit.hash === selectedCommit?.hash);
+    const trigger = scrollRef.current?.querySelector<HTMLElement>(
+      `[data-git-commit-index="${index}"]`,
+    );
+    if (!trigger) return;
+    const bounds = trigger.getBoundingClientRect();
+    // Route the keyboard request through the real trigger, preserving Base UI's
+    // anchor, selection and menu lifecycle instead of opening the empty-area menu.
+    trigger.dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: bounds.left,
+      clientY: bounds.top + bounds.height / 2,
+    }));
   };
 
   return (
@@ -264,7 +294,24 @@ export function GitCommitTable({
       <div
         ref={scrollRef}
         data-scroll-container=""
-        className="min-h-0 flex-1 overflow-auto [overflow-anchor:none]"
+        tabIndex={0}
+        aria-label={t("git.console.log")}
+        onKeyDown={handleKeyDown}
+        onContextMenu={(event) => {
+          if (event.target === event.currentTarget && event.clientX === 0 && event.clientY === 0) {
+            event.preventDefault();
+            event.stopPropagation();
+            openSelectedCommitMenu();
+          }
+        }}
+        onClick={(event) => {
+          const target = event.target as HTMLElement;
+          if (
+            event.currentTarget.contains(target) &&
+            !target.closest("button, input, select, textarea")
+          ) event.currentTarget.focus({ preventScroll: true });
+        }}
+        className="min-h-0 flex-1 overflow-auto outline-none [overflow-anchor:none]"
         style={columnStyle}
       >
         {visibleRows.length === 0 ? (
@@ -297,12 +344,7 @@ export function GitCommitTable({
                   <ContextMenu key={row.commit.hash}>
                     <ContextMenuTrigger
                       role="button"
-                      tabIndex={
-                        selectedCommit?.hash === row.commit.hash ||
-                        (!selectedCommit && virtualRow.index === 0)
-                          ? 0
-                          : -1
-                      }
+                      tabIndex={-1}
                       aria-pressed={isSelected}
                       data-git-commit-index={virtualRow.index}
                       className={cn(
@@ -313,15 +355,15 @@ export function GitCommitTable({
                         height: virtualRow.size,
                         transform: `translateY(${virtualRow.start}px)`,
                       }}
-                      onClick={(event) =>
+                      onClick={(event) => {
+                        scrollRef.current?.focus({ preventScroll: true });
                         onSelect(row.commit, visibleCommitHashes, {
                           additive: event.ctrlKey || event.metaKey,
                           range: event.shiftKey,
-                        })
-                      }
+                        });
+                      }}
                       onDoubleClick={() => onOpenDiff(row.commit)}
                       onContextMenu={() => onContextSelect(row.commit)}
-                      onKeyDown={(event) => handleRowKeyDown(event, row.commit)}
                       title={t("git.log.openDiffHint")}
                     >
                       <GitGraphRow row={row} showDecorations={showDecorations} />
@@ -339,7 +381,7 @@ export function GitCommitTable({
                         <GitLogColumnResizeHandle column="date" onStartResize={startResize} />
                       </div>
                     </ContextMenuTrigger>
-                    <ContextMenuContent>
+                    <ContextMenuContent finalFocus={scrollRef}>
                       {hasMultipleContextCommits ? (
                         <>
                           <ContextMenuItem
@@ -430,6 +472,18 @@ export function GitCommitTable({
                             <Revert />
                             {t("git.revertCommit")}
                           </ContextMenuItem>
+                        </>
+                      )}
+                      <ContextMenuSeparator />
+                      <ContextMenuItem
+                        disabled={isMutatingHistory || hasMultipleContextCommits}
+                        onClick={() => onCreateTag(row.commit)}
+                      >
+                        <TagIcon />
+                        {t("git.log.newTag")}
+                      </ContextMenuItem>
+                      {!hasMultipleContextCommits ? (
+                        <>
                           <ContextMenuSeparator />
                           <ContextMenuItem onClick={() => onCopyHash(row.commit)}>
                             <Copy />
@@ -444,7 +498,7 @@ export function GitCommitTable({
                             {t("git.log.copyCommitMessage")}
                           </ContextMenuItem>
                         </>
-                      )}
+                      ) : null}
                     </ContextMenuContent>
                   </ContextMenu>
                 );

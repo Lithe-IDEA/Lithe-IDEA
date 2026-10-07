@@ -129,7 +129,7 @@ export function TitleProjectMenu({ onOpenProjectPicker }: TitleProjectMenuProps)
         ) : (
           <FolderOpenIcon className="size-5 shrink-0" />
         )}
-        <span className="min-w-0 truncate">{projectLabel}</span>
+        <span className="min-w-0 truncate text-foreground">{projectLabel}</span>
         {/* IntelliJ draws General.ChevronDown at its native 16px, 2px after the text, and
             leaves it unrotated while the popup is open. */}
         <TitleWidgetChevron />

@@ -64,6 +64,9 @@ test("file navigation preserves repeated revisions, updates the tab and stops at
   expect(last.repoPath).toBe("C:/nested/repo");
   expect(moveCommitFile(first, -1)).toBeNull();
   expect(moveCommitFile(last, 1)).toBeNull();
+  const passive = { ...middle, preserveFocus: true };
+  expect(moveCommitFile(passive, 1)?.preserveFocus).toBe(false);
+  expect(moveCommitFile(passive, -1)?.preserveFocus).toBe(false);
   expect(formatDiffBufferLabel(preview.displayName, preview.virtualPath, undefined, middle)).toBe(
     "Repository Diff: b.ts",
   );

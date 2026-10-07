@@ -510,6 +510,23 @@ fn translate(command: &str, args: Value) -> Result<(String, Value), String> {
         "git_create_tag" => {
             let name = take_text(&mut payload, "name")?;
             let mut arguments = vec!["tag".to_string()];
+            let lightweight = payload
+                .remove("lightweight")
+                .and_then(|value| value.as_bool())
+                == Some(true);
+            if lightweight {
+                // This explicit mode must override tag.gpgSign without changing
+                // the default signing policy of existing tag-manager callers.
+                if payload.get("signed").and_then(Value::as_bool) == Some(true)
+                    || payload
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .is_some_and(|message| !message.trim().is_empty())
+                {
+                    return Err("Lightweight tags cannot include a message or signature".into());
+                }
+                arguments.push("--no-sign".into());
+            }
             if payload.remove("signed").and_then(|value| value.as_bool()) == Some(true) {
                 arguments.push("-s".into());
             }
@@ -1637,5 +1654,115 @@ mod tests {
             assert_eq!(payload["mode"], mode);
         }
         assert!(translate("git_discard_hunk", json!({ "repoPath": "C:/work" })).is_err());
+    }
+
+    // All fixture commands use Core's bounded process runner. Drop removes the
+    // owned directory even when a signing-policy assertion fails.
+    struct TagFixture(std::path::PathBuf);
+    impl TagFixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "lithe-tag-policy-{}-{}",
+                std::process::id(),
+                super::REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&root).unwrap();
+            let fixture = Self(root);
+            fixture.call("git.initialize", serde_json::json!({}));
+            fixture.git(&[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "--no-gpg-sign",
+                "-m",
+                "initial",
+            ]);
+            fixture
+        }
+        fn call(&self, command: &str, mut payload: serde_json::Value) -> serde_json::Value {
+            payload["root"] = serde_json::json!(self.0);
+            let response: serde_json::Value = serde_json::from_str(&lithe_core::execute_json(&serde_json::json!({
+                "id": "tag-policy", "command": command, "timeoutMilliseconds": 5000, "payload": payload
+            }).to_string())).unwrap();
+            assert_eq!(response["ok"], true, "{response}");
+            response["data"].clone()
+        }
+        fn git(&self, args: &[&str]) -> String {
+            let result = self.call("git.command", serde_json::json!({"arguments": args}));
+            assert_eq!(result["exitCode"], 0, "{result}");
+            result["stdout"].as_str().unwrap().trim().to_owned()
+        }
+    }
+    impl Drop for TagFixture {
+        fn drop(&mut self) {
+            if let Err(error) = std::fs::remove_dir_all(&self.0) {
+                eprintln!("Could not remove tag-policy fixture: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn lightweight_tag_overrides_default_signing_without_running_signer_or_editor() {
+        let fixture = TagFixture::new();
+        fixture.git(&["config", "tag.gpgSign", "true"]);
+        fixture.git(&["config", "gpg.program", "lithe-signer-must-not-run"]);
+        fixture.git(&["config", "core.editor", "lithe-editor-must-not-run"]);
+        let head = fixture.git(&["rev-parse", "HEAD"]);
+        let (command, payload) = super::translate(
+            "git_create_tag",
+            serde_json::json!({
+                "repoPath": fixture.0, "name": "review/lightweight", "commit": head,
+                "signed": false, "lightweight": true
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            payload["arguments"],
+            serde_json::json!(["tag", "--no-sign", "--", "review/lightweight", head])
+        );
+        let result = fixture.call(&command, payload);
+        assert_eq!(result["exitCode"], 0, "{result}");
+        assert_eq!(
+            fixture.git(&["cat-file", "-t", "refs/tags/review/lightweight"]),
+            "commit"
+        );
+        assert_eq!(
+            fixture.git(&["rev-parse", "refs/tags/review/lightweight"]),
+            head
+        );
+        assert_eq!(fixture.git(&["config", "tag.gpgSign"]), "true");
+    }
+
+    #[test]
+    fn explicit_lightweight_mode_does_not_change_existing_tag_manager_policy() {
+        for signed in [false, true] {
+            let (_, payload) = super::translate(
+                "git_create_tag",
+                serde_json::json!({
+                    "repoPath": "C:/fixture", "name": "review/tag", "signed": signed
+                }),
+            )
+            .unwrap();
+            let expected = if signed {
+                serde_json::json!(["tag", "-s", "--", "review/tag"])
+            } else {
+                serde_json::json!(["tag", "--", "review/tag"])
+            };
+            assert_eq!(payload["arguments"], expected);
+        }
+        for extra in [
+            serde_json::json!({"signed": true}),
+            serde_json::json!({"message": "annotation"}),
+        ] {
+            let mut payload = serde_json::json!({"repoPath": "C:/fixture", "name": "review/tag", "lightweight": true});
+            payload
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            assert!(super::translate("git_create_tag", payload).is_err());
+        }
     }
 }

@@ -58,13 +58,13 @@ export function GitLogTitleBar({
         >
           <Settings />
         </Button>
-        <span className="ml-auto text-subtle-foreground">{t("footer.readOnly")}</span>
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
           onClick={onClose}
           tooltip={t("git.log.hide")}
+          tooltipTriggerClassName="ml-auto"
           aria-label={t("git.log.hide")}
         >
           <MinusIcon />

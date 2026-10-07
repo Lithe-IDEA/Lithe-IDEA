@@ -137,3 +137,11 @@ describe("Git remote Pull API", () => {
     });
   });
 });
+
+test("Background Pull forwards the complete expected checkout identity to Core", async () => {
+  invoke.mockImplementation(async (command: string) => command === "git_discover_repo" ? "C:/guarded-repo" : null);
+  await expect(executePullChanges("C:/guarded-repo", "ffOnly", "refs/heads/topic")).resolves.toEqual({ success: true });
+  expect(invoke).toHaveBeenCalledWith("git_pull", {
+    repoPath: "C:/guarded-repo", mode: "ffOnly", expectedBranch: "refs/heads/topic",
+  });
+});

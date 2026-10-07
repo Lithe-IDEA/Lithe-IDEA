@@ -57,6 +57,10 @@ function openDiffBuffer(
     .actions.openBuffer(virtualPath, displayName, "", false, undefined, true, true, diffData);
 }
 
+function openCommitPreviewBuffer(path: string, name: string, data: MultiFileDiff) {
+  return openDiffBuffer(path, name, { ...data, preserveFocus: true });
+}
+
 function normalizeDisplayedFilePath(filePath: string, side: "old" | "new"): string {
   let actualFilePath = filePath;
   if (filePath.includes(" -> ")) {
@@ -111,7 +115,7 @@ export function useGitDiffActions({
   const previewCommitFileDiff = useCommitFilePreview(
     activeRepoPath,
     commitPreviewScope,
-    openDiffBuffer,
+    openCommitPreviewBuffer,
   );
 
   const openOriginalFile = useCallback(

@@ -17,6 +17,7 @@ export function moveCommitFile(data: MultiFileDiff, direction: -1 | 1): MultiFil
   if (index < 0 || target < 0 || target >= data.files.length) return null;
   const key = getMultiDiffSectionKey(data, data.files[target], target);
   return { ...data, initiallySelectedFileKey: key, initiallyExpandedFileKey: key,
+    preserveFocus: false,
     initialDifference: direction === -1 ? "last" : "first" };
 }
 

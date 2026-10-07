@@ -865,8 +865,21 @@ overflow. See `shared/fixtures/git/execution-events-v1.json`.
 `operationAbort`, `operationSkip`, `createTag`, and `deleteTag`. Optional fields are `paths`, `reference`, `referenceKind`,
 `gitReference`, `revision`, `revisions`, `name`, `message`, `remote`, `destination`, `mode`,
 `includeUntracked`, `checkout`, `amend`, `force`, `pushTags`, `expectedPush`, `autoStash`,
-`worktreeMode`, `noCheckout`, and `expectedState`. The four history actions require the reviewed `expectedState`
+`worktreeMode`, `noCheckout`, `expectedBranch`, and `expectedState`. The four history actions require the reviewed `expectedState`
 described below; earlier unreviewed history-write callers must migrate.
+
+`pull` optionally accepts `expectedBranch` as a complete local `refs/heads/*`
+identity for a background update whose host has already fetched. Core pins that
+branch's fetched upstream commit and integrates it with local `merge --ff-only`,
+`merge --no-edit`, or `rebase`, avoiding a second network wait in `git pull`.
+It verifies symbolic HEAD under the repository writer lease before resolving the
+upstream and again before integration; a different branch or detached HEAD fails
+with `invalid_request` and does not integrate. Explicit source references and
+auto-stash are incompatible with this guarded mode. Other operations reject this field. Omission preserves
+existing clients. Hosts should also recheck the selected worktree after Fetch and
+before invoking the guarded update, reporting `state-changed` if the checkout changed while
+the request was waiting. The lease serializes Lithe writes, not external Git
+clients; the final check reduces the gap and is not an external checkout lock.
 
 The core validates pathspecs, revisions, branch names, references, reset modes,
 stash references, and operation-specific required fields before invoking Git.

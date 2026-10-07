@@ -194,6 +194,17 @@ describe("GitPullWorkflow", () => {
     expect(harness.pullStrategies).toEqual(["merge"]);
   });
 
+  test("background fast-forward update fails on divergence without leaving a pending dialog", async () => {
+    const harness = createHarness({ preflight: async () => cleanPreflight({ ahead: 1, behind: 1, diverged: true }) });
+    const result = await harness.workflow.run("C:/worktree", {
+      ...harness.options, strategy: "ffOnly", allowStrategyPrompt: false,
+    });
+    expect(result).toMatchObject({ status: "failed", stage: "pull" });
+    expect(harness.pullStrategies).toEqual([]);
+    expect(harness.workflow.getSnapshot()).toEqual({ isPulling: false, isPullLocked: false, pendingPreflight: null });
+    expect(harness.refreshCount()).toBe(1);
+  });
+
   test("pulls a chosen remote branch into the current branch with the selected strategy", async () => {
     const reference = remoteReference("origin/release");
     const harness = createHarness({

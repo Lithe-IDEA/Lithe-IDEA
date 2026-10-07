@@ -1346,6 +1346,9 @@
 "%lld more notifications" = "%lld more notifications";
 "1 more notification" = "1 more notification";
 
+// Notification merged from repeated messages; the first argument is the message.
+"%@ (%lld)" = "%@ (%lld)";
+
 "Open notification history" = "Open notification history";
 
 "Dismiss notification" = "Dismiss notification";

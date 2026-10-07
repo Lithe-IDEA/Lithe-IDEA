@@ -233,6 +233,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           bun test src/features/file-explorer/lib/java-clipboard-class.test.ts src/features/file-explorer/lib/paste-java-class-from-clipboard.test.ts
           node .agents/skills/write-stable-tests/scripts/run-bun-tests-with-timing.mjs --suite-timeout-ms 60000 --report .artifacts/test-stability/windows-file-watcher.json -- src/features/file-system/services/file-watcher-listener.test.ts src/features/file-system/stores/file-watcher.store.test.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Merged notification counts rely on toast identity, so the resend path
+          # stays covered instead of only its formatter.
+          node .agents/skills/write-stable-tests/scripts/run-bun-tests-with-timing.mjs --suite-timeout-ms 60000 --report .artifacts/test-stability/windows-notifications.json -- src/features/notifications
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Test workspace open, replace, and close lifecycle
         shell: pwsh

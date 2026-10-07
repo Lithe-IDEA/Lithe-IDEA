@@ -2618,6 +2618,9 @@
 "%lld more notifications" = "还有 %lld 条通知";
 "1 more notification" = "还有 1 条通知";
 
+// Notification merged from repeated messages; the first argument is the message.
+"%@ (%lld)" = "%@（%lld）";
+
 "Open notification history" = "打开通知历史";
 
 "Dismiss notification" = "关闭通知";

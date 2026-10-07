@@ -17,6 +17,9 @@ macOS 使用系统多文件拖动，工作区模块继续负责实际文件操�
 
 ## 决策
 
+- 文件、目录、项目根和多选右键菜单复用已有项目范围查找与替换入口，沿用整个项目范围、
+  选中文字预填和既有替换预览/确认流程；树视图只提供入口，实际查找和替换由已有功能处理。
+
 - 行高亮和右键目标只使用明确选择集合。⌘ 点击增减单项，Shift 只在需要范围时
   读取可见行顺序，⌘A 保留焦点项同级语义。
 - 原生鼠标适配器等待松开鼠标才执行普通点击；达到拖动阈值后只启动拖动，
@@ -37,6 +40,8 @@ macOS 使用系统多文件拖动，工作区模块继续负责实际文件操�
 目录高亮去遍历或加载未展开的后代。
 
 ## 考虑过的备选方案
+
+- 在树菜单单独实现搜索或直接替换文件：会绕过已有搜索状态和替换预览/确认流程，不采用。
 
 - 仅修复高亮：无法补齐批量移动，不能满足完整操作链。
 - 单个 SwiftUI URL 拖动：不能表达多个系统文件拖动项；使用系统原生会话保留互操作。
@@ -60,8 +65,12 @@ Windows 暂无该批量选择入口，矩阵保持缺失，不声明已同步实
 - `./scripts/verify-agent-notes.sh`
 - macOS 实机分别测量大目录选择、展开与滚动，验证能滚动至末尾及定位到未显示行；同时回归修饰键、右键、目录与多文件拖动。
 
+- 项目根、目录、文件和多选右键菜单分别验证 Find in Files / Replace in Files；
+  验证编辑器选中文字预填、查找输入框聚焦和替换预览/取消/确认，搜索范围仍为整个项目。
+
 ## 适用范围
 
+- `macos/Sources/Lithe/Models/AppModel/AppModel+SearchModule.swift`
 - `macos/Sources/Lithe/Views/Workspace/ProjectSidebarView.swift`
 - `macos/Sources/Lithe/Views/Workspace/ProjectTreeSelection.swift`
 - `macos/Sources/Lithe/Platform/MacOS/UI/ProjectTreeRowInteraction.swift`

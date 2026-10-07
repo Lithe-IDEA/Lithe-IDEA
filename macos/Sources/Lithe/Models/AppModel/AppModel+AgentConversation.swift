@@ -164,44 +164,9 @@ extension AppModel {
 
     func agentLaunchConfiguration(agentID: String) throws -> AgentLaunchConfiguration {
         guard let workspaceURL else { throw AgentConversationError.notConnected }
-        if settings.agentConfigurations[agentID]?.authentication == .codexSubscription {
-            guard agentID == "codex-acp" else { throw AgentConversationError.missingProvider }
-            return AgentLaunchConfiguration(agentID: agentID, command: "", arguments: [],
-                workspaceURL: workspaceURL, dataDirectory: agentDataDirectory,
-                providerProtocol: "", providerEndpoint: "", apiKey: "", providerName: "", model: "",
-                allowsInsecureHTTP: false, authentication: .codexSubscription)
-        }
-        // A saved import is not the current CLI default. Read through the same
-        // configuration ports used for credentials, once at connection startup.
-        settings.refreshAgentModels(from: services.aiConfigurationSources.compactMap { $0.loadModel() })
-        guard let provider = settings.agentProvider(for: agentID) else {
-            throw AgentConversationError.missingProvider
-        }
-        let apiKey = services.credentialResolver.readAPIKey(for: provider)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !apiKey.isEmpty else { throw AgentConversationError.missingAPIKey }
-        let isCustom = agentID == AgentConfiguration.customAgentID
-        let command = settings.agentCommand.trimmingCharacters(in: .whitespacesAndNewlines)
-        if isCustom && command.isEmpty { throw AgentConversationError.missingCommand }
-        // One argument per line, passed to the process without shell parsing.
-        let arguments = isCustom
-            ? settings.agentArguments
-                .components(separatedBy: .newlines)
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
-            : []
-        return AgentLaunchConfiguration(
-            agentID: isCustom ? nil : agentID,
-            command: command,
-            arguments: arguments,
-            workspaceURL: workspaceURL,
-            dataDirectory: agentDataDirectory,
-            providerProtocol: provider.apiProtocol.rawValue,
-            providerEndpoint: provider.endpoint,
-            apiKey: apiKey,
-            providerName: provider.name,
-            model: provider.model,
-            allowsInsecureHTTP: provider.allowsInsecureHTTP
-        )
+        return try AgentLaunchConfigurationResolver(settings: settings,
+            configurationSources: services.aiConfigurationSources,
+            credentialResolver: services.credentialResolver)
+            .resolve(agentID: agentID, workspaceURL: workspaceURL, dataDirectory: agentDataDirectory)
     }
 }

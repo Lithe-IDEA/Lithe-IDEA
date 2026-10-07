@@ -2,7 +2,8 @@
 //!
 //! Codex ACP retains an unknown configured model as a synthetic selector choice.
 //! Its legacy model state excludes that choice, and its versioned AIR extension
-//! supplies the actual recommended model. Neither fact is guessed from a name.
+//! may supply a recommended model. Without one, select from the catalog itself;
+//! neither availability nor preference is guessed from a model name.
 
 use agent_client_protocol::schema::v1::{
     NewSessionRequest, NewSessionResponse, SessionConfigKind, SessionConfigOptionCategory,
@@ -48,8 +49,9 @@ fn base_model(id: &str) -> &str {
         .unwrap_or(id)
 }
 
-/// A recommendation is used only with positive evidence that the current model
-/// is absent from the catalog and the replacement exists in both upstream lists.
+/// Find a valid replacement from the Agent-owned catalog without guessing a
+/// model name. The AIR recommendation wins; older adapters fall back to the
+/// first catalog choice that the Agent exposed in its selector.
 fn replacement(response: &CatalogSessionResponse) -> Option<(String, String)> {
     // Optional legacy fields must not turn an otherwise valid ACP response into
     // an error when a different adapter uses another model-state shape.
@@ -73,25 +75,42 @@ fn replacement(response: &CatalogSessionResponse) -> Option<(String, String)> {
         if current != base_model(&models.current_model_id) || available(current) {
             continue;
         }
-        let air = option.meta.as_ref()?.get("jetbrains")?.get("air")?;
-        if air.get("version")?.as_u64()? < 1 {
-            continue;
-        }
-        let recommended = air.get("recommendedValue")?.as_str()?;
-        let selectable = match &select.options {
+        let recommended = option
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("jetbrains"))
+            .and_then(|jetbrains| jetbrains.get("air"))
+            .filter(|air| {
+                air.get("version")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0)
+                    >= 1
+            })
+            .and_then(|air| air.get("recommendedValue"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| available(value));
+        let selectable = |value: &str| match &select.options {
             SessionConfigSelectOptions::Ungrouped(options) => options
                 .iter()
-                .any(|choice| choice.value.0.as_ref() == recommended),
+                .any(|choice| choice.value.0.as_ref() == value),
             SessionConfigSelectOptions::Grouped(groups) => groups.iter().any(|group| {
                 group
                     .options
                     .iter()
-                    .any(|choice| choice.value.0.as_ref() == recommended)
+                    .any(|choice| choice.value.0.as_ref() == value)
             }),
             _ => false,
         };
-        if available(recommended) && selectable {
+        if let Some(recommended) = recommended.filter(|value| selectable(value)) {
             return Some((option.id.0.to_string(), recommended.to_owned()));
+        }
+        let fallback = models
+            .available_models
+            .iter()
+            .map(|model| base_model(&model.model_id))
+            .find(|value| selectable(value));
+        if let Some(fallback) = fallback {
+            return Some((option.id.0.to_string(), fallback.to_owned()));
         }
     }
     None
@@ -122,7 +141,7 @@ pub(crate) async fn new_session(
         });
         if !confirmed {
             return Err(super::internal(
-                "The Agent did not confirm its recommended model. Retry the conversation.",
+                "The Agent did not confirm the selected model. Retry the conversation.",
             ));
         }
         response.session.config_options = Some(configured.config_options);
@@ -135,7 +154,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn repair_requires_catalog_and_a_selectable_upstream_recommendation() {
+    fn repair_uses_recommendation_or_a_selectable_catalog_model() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "../../../shared/fixtures/agent/acp-events-v1.json"
         ))
@@ -146,15 +165,25 @@ mod tests {
             replacement(&parsed(initial.clone())),
             Some(("model".into(), "model-current".into()))
         );
-        for mutation in [
-            "validCurrent",
-            "noCatalog",
-            "malformedCatalog",
-            "emptyCatalog",
-            "noRecommendation",
-            "unavailableRecommendation",
-            "wrongVersion",
-            "mismatchedCurrent",
+        for (mutation, expected) in [
+            ("validCurrent", None),
+            ("noCatalog", None),
+            ("malformedCatalog", None),
+            ("emptyCatalog", None),
+            ("noRecommendation", Some(("model", "model-current"))),
+            (
+                "unavailableRecommendation",
+                Some(("model", "model-current")),
+            ),
+            ("wrongVersion", Some(("model", "model-current"))),
+            ("preferRecommendation", Some(("model", "model-other"))),
+            ("unselectableRecommendation", Some(("model", "model-other"))),
+            (
+                "groupedWithoutRecommendation",
+                Some(("model", "model-current")),
+            ),
+            ("noSelectableCatalogModel", None),
+            ("mismatchedCurrent", None),
         ] {
             let mut value = initial.clone();
             match mutation {
@@ -183,12 +212,39 @@ mod tests {
                     value["configOptions"][0]["_meta"]["jetbrains"]["air"]["version"] =
                         serde_json::json!(0)
                 }
+                "preferRecommendation" => {
+                    value["configOptions"][0]["_meta"]["jetbrains"]["air"]["recommendedValue"] =
+                        serde_json::json!("model-other")
+                }
+                "unselectableRecommendation" => {
+                    value["configOptions"][0]["options"]
+                        .as_array_mut()
+                        .unwrap()
+                        .remove(1);
+                }
+                "groupedWithoutRecommendation" => {
+                    let option = &mut value["configOptions"][0];
+                    option.as_object_mut().unwrap().remove("_meta");
+                    option["options"] = serde_json::json!([{
+                        "group": "official", "name": "Official", "options": option["options"]
+                    }]);
+                }
+                "noSelectableCatalogModel" => {
+                    value["configOptions"][0]["options"]
+                        .as_array_mut()
+                        .unwrap()
+                        .truncate(1);
+                }
                 "mismatchedCurrent" => {
                     value["models"]["currentModelId"] = serde_json::json!("different[max]")
                 }
                 _ => unreachable!(),
             }
-            assert_eq!(replacement(&parsed(value)), None, "{mutation}");
+            assert_eq!(
+                replacement(&parsed(value)),
+                expected.map(|(id, model)| (id.into(), model.into())),
+                "{mutation}"
+            );
         }
     }
 }

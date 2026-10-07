@@ -251,7 +251,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust_core == 'true'
     runs-on: macos-26
-    timeout-minutes: 30
+    # Cold Rust and Swift builds can consume 30 minutes before report upload.
+    # Individual test harness deadlines still bound the integration suites.
+    timeout-minutes: 40
 
     steps:
       - name: Check out source

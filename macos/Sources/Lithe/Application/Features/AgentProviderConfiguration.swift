@@ -21,7 +21,7 @@ struct AgentProviderConfiguration {
 
     func draft(source: AIConfigurationSourceKind, provider: AIProviderProfile? = nil) throws -> AgentProviderDraft {
         let endpoint = provider?.endpoint ?? ""
-        let model = provider?.model ?? ""
+        let model = provider?.model ?? source.newProviderModel
         let key = provider.flatMap { secureStore.read(key: $0.apiKeyIdentifier) } ?? ""
         let configuration: String
         let authentication: String

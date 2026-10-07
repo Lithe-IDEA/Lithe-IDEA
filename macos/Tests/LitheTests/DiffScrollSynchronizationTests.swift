@@ -1,4 +1,5 @@
 import AppKit
+import LitheCoreContracts
 import SwiftUI
 import Testing
 @testable import LitheGitModule
@@ -337,32 +338,16 @@ struct DiffScrollSynchronizationTests {
         await model.shutdownProjectSession()
     }
 
-    @Test(.enabled(if: RustCoreBridge().isAvailable, "Requires the linked Rust Core integration library"))
+    @Test
     func commitToolbarRoutesExistingActionsAndFoldsBothViewers() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("lithe-diff-actions-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        @discardableResult
-        func git(_ arguments: [String]) async throws -> String {
-            let result = try await TestProcess.run(executableURL: URL(fileURLWithPath: "/usr/bin/git"),
-                arguments: arguments, currentDirectoryURL: root)
-            try #require(result.terminationStatus == 0)
-            return String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        try await git(["init", "--template=", "-q"])
-        let original = (1...40).map { "let value\($0) = \($0)" }.joined(separator: "\n") + "\n"
-        for name in ["a.swift", "b.swift"] { try Data(original.utf8).write(to: root.appendingPathComponent(name)) }
-        try await git(["add", "."])
-        let commitArguments = ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgSign=false", "commit", "-qm"]
-        try await git(commitArguments + ["base"])
-        let parent = try await git(["rev-parse", "HEAD"])
-        for name in ["a.swift", "b.swift"] { try Data((original + "added()\n").utf8).write(to: root.appendingPathComponent(name)) }
-        try await git(["add", "."])
-        try await git(commitArguments + ["change"])
-        let hash = try await git(["rev-parse", "HEAD"])
-        let commit = GitCommit(hash: hash, shortHash: String(hash.prefix(8)), parentHashes: [parent],
-            authorName: "Test", authorEmail: "test@example.invalid", date: "", subject: "change", decorations: "")
-        let feature = GitFeatureModel(service: GitService(operations: RustGitOperations(core: RustCoreBridge())))
+        // Toolbar behavior needs stable commit data, not a real Git executable or
+        // repository setup whose process deadline can expire on a loaded runner.
+        let operations = DiffToolbarGitOperations(root: root)
+        let commit = operations.commitValue
+        let feature = GitFeatureModel(service: GitService(operations: operations))
         defer { feature.reset() }
         feature.configure(workspaceURLProvider: { root }, isGitLogVisibleProvider: { false }, notify: { _ in }, onStateRefreshed: {})
         await feature.refreshGit()
@@ -451,4 +436,88 @@ struct DiffScrollSynchronizationTests {
     private func descendants(_ view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap { descendants($0) }
     }
+}
+
+/// Supplies the same two modified files and foldable context through the normal
+/// service boundary, leaving native rendering and feature actions under test.
+private struct DiffToolbarGitOperations: GitOperations {
+    let root: URL
+    let commitValue = GitCommit(hash: "aaaaaaaa", shortHash: "aaaaaaaa", parentHashes: ["bbbbbbbb"],
+        authorName: "Test", authorEmail: "test@example.invalid", date: "", subject: "change", decorations: "")
+    let filesValue = [GitCommitFile(status: "M", path: "a.swift"), GitCommitFile(status: "M", path: "b.swift")]
+
+    func snapshot(at rootURL: URL) -> GitSnapshot? {
+        rootURL == root ? GitSnapshot(repositoryRoot: root, branch: "fixture", changes: []) : nil
+    }
+    func files(in commit: GitCommit, at rootURL: URL) -> [GitCommitFile]? {
+        rootURL == root && commit.hash == commitValue.hash ? filesValue : nil
+    }
+    func commitDiffDocument(at rootURL: URL, commit: String, pathspecs: [String], whitespace: GitDiffWhitespaceMode) -> DiffDocument? {
+        guard rootURL == root, commit == commitValue.hash,
+              pathspecs.count == 1, filesValue.contains(where: { $0.path == pathspecs[0] }) else { return nil }
+        var rows = (1...40).map {
+            DiffRow(oldLine: $0, newLine: $0, left: "let value\($0) = \($0)", right: nil, kind: .context, sequence: $0 - 1)
+        }
+        rows.append(DiffRow(oldLine: nil, newLine: 41, left: nil, right: "added()", kind: .addition, sequence: 40))
+        return DiffDocument(rows: rows, hunks: [])
+    }
+    func run(arguments: [String], workingDirectory: String, input: String?) -> GitProcessResult {
+        Issue.record("The Diff toolbar fixture must not execute Git commands")
+        return GitProcessResult(output: "Unexpected fixture command", exitCode: 1)
+    }
+    func watchContext(at rootURL: URL) -> GitWatchContext? { nil }
+    func worktrees(at rootURL: URL) -> [GitWorktree]? { [] }
+    func diffDocument(at rootURL: URL, pathspecs: [String], staged: Bool, untracked: Bool, whitespace: GitDiffWhitespaceMode) -> DiffDocument? { nil }
+    func diffPatch(at rootURL: URL, pathspecs: [String], staged: Bool, untracked: Bool, whitespace: GitDiffWhitespaceMode) -> String? { nil }
+    func comparisonDiffDocument(at rootURL: URL, reference: String, pathspecs: [String], whitespace: GitDiffWhitespaceMode) -> DiffDocument? { nil }
+    func comparisonDiffDocument(at rootURL: URL, reference: GitReference, targetReference: GitReference?, pathspecs: [String], whitespace: GitDiffWhitespaceMode) -> DiffDocument? { nil }
+    func applyPatch(_ patch: String, at rootURL: URL, mode: String) -> GitProcessResult? { nil }
+    func history(at rootURL: URL, reference: GitReference?, limit: Int) -> GitHistorySnapshot? { nil }
+    func commit(at rootURL: URL, hash: String) -> GitCommit? { nil }
+    func comparison(for reference: GitReference, at rootURL: URL) -> GitBranchComparison? { nil }
+    func comparison(from reference: GitReference, to target: GitReference, at rootURL: URL) -> GitBranchComparison? { nil }
+    func stashes(at rootURL: URL) -> [GitStash]? { [] }
+    func blame(at rootURL: URL, relativePath: String) -> [GitBlameLine]? { nil }
+    func stage(_ change: GitChange) -> GitProcessResult? { nil }
+    func unstage(_ change: GitChange) -> GitProcessResult? { nil }
+    func discard(_ change: GitChange) -> GitProcessResult? { nil }
+    func discardAll(_ change: GitChange) -> GitProcessResult? { nil }
+    func commit(at rootURL: URL, message: String, amend: Bool) -> GitProcessResult? { nil }
+    func cherryPick(_ hash: String, at rootURL: URL) -> GitProcessResult? { nil }
+    func revert(_ hash: String, at rootURL: URL) -> GitProcessResult? { nil }
+    func resetCurrentBranch(to hash: String, mode: String, at rootURL: URL) -> GitProcessResult? { nil }
+    func createBranch(named name: String, from reference: GitReference, checkout: Bool, at rootURL: URL) -> GitProcessResult? { nil }
+    func createWorktree(named name: String, from reference: GitReference, revision: String?, at destination: URL, repositoryRoot: URL) -> GitProcessResult? { nil }
+    func removeWorktree(_ worktree: GitWorktree, force: Bool, at rootURL: URL) -> GitProcessResult? { nil }
+    func lockWorktree(_ worktree: GitWorktree, at rootURL: URL) -> GitProcessResult? { nil }
+    func unlockWorktree(_ worktree: GitWorktree, at rootURL: URL) -> GitProcessResult? { nil }
+    func repairWorktrees(at rootURL: URL) -> GitProcessResult? { nil }
+    func pruneWorktrees(at rootURL: URL) -> GitProcessResult? { nil }
+    func renameBranch(_ reference: GitReference, to name: String, at rootURL: URL) -> GitProcessResult? { nil }
+    func deleteBranch(_ reference: GitReference, at rootURL: URL) -> GitProcessResult? { nil }
+    func mergeBranch(_ reference: GitReference, at rootURL: URL) -> GitProcessResult? { nil }
+    func rebaseCurrentBranch(onto reference: GitReference, at rootURL: URL) -> GitProcessResult? { nil }
+    func checkoutAndRebase(_ reference: GitReference, at rootURL: URL) -> GitProcessResult? { nil }
+    func updateCurrentBranch(at rootURL: URL, strategy: GitPullStrategy) -> GitProcessResult? { nil }
+    func pullRemoteReference(_ reference: GitReference, strategy: GitPullStrategy, at rootURL: URL) -> GitProcessResult? { nil }
+    func pullPreflight(at rootURL: URL) -> GitPullPreflightState? { nil }
+    func conflictMarkerPaths(at rootURL: URL) -> [String] { [] }
+    func integrationPreflight(for target: GitIntegrationTarget, operation: GitIntegrationOperation, at rootURL: URL) -> GitIntegrationPreflightState? { nil }
+    func fetch(at rootURL: URL) -> GitProcessResult? { nil }
+    func checkout(_ reference: GitReference, at rootURL: URL, force: Bool, autoStash: Bool) -> GitProcessResult? { nil }
+    func checkoutBlockingPaths(for reference: GitReference, at rootURL: URL) -> [String] { [] }
+    func operationState(at rootURL: URL) -> GitOperationState? { nil }
+    func continueOperation(at rootURL: URL) -> GitProcessResult? { nil }
+    func abortOperation(at rootURL: URL) -> GitProcessResult? { nil }
+    func skipOperationStep(at rootURL: URL) -> GitProcessResult? { nil }
+    func checkoutRevision(_ revision: String, at rootURL: URL) -> GitProcessResult? { nil }
+    func push(_ reference: GitReference, at rootURL: URL) -> GitProcessResult? { nil }
+    func cloneRepository(from remote: String, to destination: URL) -> GitProcessResult? { nil }
+    func stash(message: String, includeUntracked: Bool, at rootURL: URL) -> GitProcessResult? { nil }
+    func applyStash(_ stash: GitStash, at rootURL: URL) -> GitProcessResult? { nil }
+    func popStash(_ stash: GitStash, at rootURL: URL) -> GitProcessResult? { nil }
+    func dropStash(_ stash: GitStash, at rootURL: URL) -> GitProcessResult? { nil }
+    func stageAll(at rootURL: URL) -> GitProcessResult? { nil }
+    func createTag(named name: String, at revision: String, message: String?, rootURL: URL) -> GitProcessResult? { nil }
+    func deleteTag(named name: String, rootURL: URL) -> GitProcessResult? { nil }
 }

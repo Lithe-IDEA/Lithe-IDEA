@@ -102,6 +102,38 @@ struct CommitMessageTests {
     }
 
     @Test
+    func switchingNewProviderToAnthropicRequiresModelBeforeEncodingRequest() async throws {
+        var settings = CommitMessageAISettings.default
+        let provider = settings.addProvider()
+        settings.updateActiveProvider {
+            $0.endpoint = "https://example.test/v1"
+            $0.apiProtocol = .anthropicMessages
+        }
+        let transport = MockAIHTTPTransport(response: AIHTTPResponse(statusCode: 200,
+            body: Data(#"{"content":[{"type":"text","text":"feat: update checker"}]}"#.utf8)))
+        let service = CommitMessageGenerationService(transport: transport,
+            credentialResolver: InMemoryAIProviderCredentialResolver(
+                values: [provider.apiKeyIdentifier: "fixture-secret"]))
+        let input = CommitMessageInput(path: "Sources/UpdateChecker.swift", changeKind: .modified,
+            diff: "@@ -1,1 +1,2 @@\n-old\n+new")
+
+        do {
+            _ = try await service.generate(input: input, settings: settings)
+            Issue.record("A new Anthropic provider must require an explicit model before sending")
+        } catch CommitMessageGenerationError.invalidProvider {
+            // Missing model must fail locally before transport is called.
+        }
+        #expect(await transport.lastRequest == nil)
+
+        settings.updateActiveProvider { $0.model = "fixture-claude-model" }
+        #expect(try await service.generate(input: input, settings: settings) == "feat: update checker")
+        let request = try #require(await transport.lastRequest)
+        #expect(request.url.absoluteString == "https://example.test/v1/messages")
+        let json = try #require(JSONSerialization.jsonObject(with: request.body) as? [String: Any])
+        #expect(json["model"] as? String == "fixture-claude-model")
+    }
+
+    @Test
     func anthropicGenerationUsesNativeMessagesRequestAndHeaders() async throws {
         let profile = AIProviderProfile(
             name: "Claude",

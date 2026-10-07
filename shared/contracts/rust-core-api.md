@@ -166,13 +166,17 @@ busy-session rejection or the command/event shape.
 For a new session, the host also preserves the adapter's optional legacy model
 catalog while decoding the ACP response and negotiates only the versioned
 `jetbrains.air.recommendedValue` extension. If the configured current model is
-absent from that catalog and the upstream recommendation is present in both the
-catalog and selector, the host requests that model before publishing
-`sessionCreated`. Only the acknowledged full configuration is exposed. Both
+absent from that catalog, the host prefers an upstream recommendation present in
+both the catalog and selector. Without a usable recommendation it selects the
+first catalog model available in the selector, including grouped options. The
+host requests that model before publishing `sessionCreated`; only the
+acknowledged full configuration is exposed, keeping the official choices visible
+after the adapter removes its synthetic unknown model. Both
 requests share the session creation deadline; rejection, timeout, or an
 unconfirmed selection emits `requestFailed`. Valid configured models, loaded
 history, and global CLI files remain unchanged. Missing or malformed optional
-catalog/recommendation data leaves standard ACP behavior intact. The `upstream`
+catalog data or an empty catalog/selector intersection leaves standard ACP
+behavior intact. The `upstream`
 scenarios in the agent fixture protect this workflow without changing the
 command/event JSON shape.
 

@@ -669,12 +669,17 @@ async fn every_new_session_repairs_a_stale_model_before_publishing_options() {
     let mut harness = Harness::ready().await;
     let upstream = fixture()["upstream"].clone();
     for token in ["first", "second"] {
+        let mut initial = upstream["staleModelSession"].clone();
+        if token == "second" {
+            // Adapters without AIR recommendations still expose a usable catalog.
+            initial["configOptions"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("_meta");
+        }
         harness.send(json!({ "kind": "newSession", "token": token }));
         let request = harness.agent.expect("session/new").await;
-        harness
-            .agent
-            .reply(&request, upstream["staleModelSession"].clone())
-            .await;
+        harness.agent.reply(&request, initial).await;
         let repair = harness.agent.expect("session/set_config_option").await;
         assert_eq!(repair["params"]["sessionId"], "session-repaired");
         assert_eq!(repair["params"]["configId"], "model");

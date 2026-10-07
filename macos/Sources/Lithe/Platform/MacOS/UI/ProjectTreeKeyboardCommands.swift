@@ -1,13 +1,14 @@
 import AppKit
 import SwiftUI
 
-/// Routes clipboard shortcuts only after a pointer interaction inside the tree.
+/// Routes navigation and clipboard shortcuts after a pointer interaction inside the tree.
 /// A click elsewhere, or a keyboard focus change after the click, returns
 /// keyboard ownership to the focused view.
 struct ProjectTreeKeyboardCommands: NSViewRepresentable {
     let copy: () -> Void
     let paste: () -> Void
     let selectAll: () -> Void
+    var navigate: (ProjectTreeNavigationKey, Bool) -> Void = { _, _ in }
 
     func makeNSView(context: Context) -> ProjectTreeKeyboardCommandView {
         let view = ProjectTreeKeyboardCommandView()
@@ -19,6 +20,7 @@ struct ProjectTreeKeyboardCommands: NSViewRepresentable {
         view.copyItems = copy
         view.pasteItems = paste
         view.selectAllItems = selectAll
+        view.navigate = navigate
     }
 
     static func dismantleNSView(_ view: ProjectTreeKeyboardCommandView, coordinator: ()) {
@@ -30,6 +32,7 @@ final class ProjectTreeKeyboardCommandView: NSView {
     var copyItems: (() -> Void)?
     var pasteItems: (() -> Void)?
     var selectAllItems: (() -> Void)?
+    var navigate: ((ProjectTreeNavigationKey, Bool) -> Void)?
     private var monitor: Any?
     private var ownsKeyboard = false
     // The tree has no focusable view, and opening a file may move focus to the
@@ -90,7 +93,13 @@ final class ProjectTreeKeyboardCommandView: NSView {
             releaseKeyboard()
             return event
         }
-        guard event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command else { return event }
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if modifiers.isEmpty || modifiers == .shift,
+           let key = ProjectTreeNavigationKey(rawValue: event.keyCode) {
+            navigate?(key, modifiers.contains(.shift))
+            return nil
+        }
+        guard modifiers == .command else { return event }
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "c": copyItems?()
         case "v": pasteItems?()

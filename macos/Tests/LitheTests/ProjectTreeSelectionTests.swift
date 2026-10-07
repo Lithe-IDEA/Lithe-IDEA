@@ -8,6 +8,123 @@ import Testing
 struct ProjectTreeSelectionTests {
     @Test
     @MainActor
+    func treeArrowsAreConsumedAfterClickAndYieldOutsideTheTree() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let tree = ProjectTreeKeyboardCommandView(frame: NSRect(x: 0, y: 0, width: 200, height: 300))
+        defer { tree.removeMonitor(); window.makeFirstResponder(nil); window.close() }
+        window.contentView?.addSubview(tree)
+        var keys: [ProjectTreeNavigationKey] = []
+        var extended: [Bool] = []
+        tree.navigate = { key, extending in keys.append(key); extended.append(extending) }
+        _ = tree.handle(try mouseDown(at: NSPoint(x: 50, y: 50), in: window))
+        for code: UInt16 in [123, 124, 125, 126] {
+            let event = try #require(NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: "",
+                charactersIgnoringModifiers: "", isARepeat: false, keyCode: code))
+            #expect(tree.handle(event) == nil, "Tree arrow must not reach the editor")
+        }
+        #expect(keys == [.left, .right, .down, .up])
+        #expect(extended == [false, false, false, false])
+        let shiftDown = try #require(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: .shift, timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "",
+            charactersIgnoringModifiers: "", isARepeat: false, keyCode: 125))
+        #expect(tree.handle(shiftDown) == nil)
+        #expect(extended.last == true)
+        _ = tree.handle(try mouseDown(at: NSPoint(x: 300, y: 50), in: window))
+        let down = try #require(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "",
+            charactersIgnoringModifiers: "", isARepeat: false, keyCode: 125))
+        #expect(tree.handle(down) != nil)
+        #expect(keys.count == 5)
+    }
+
+    @Test
+    func navigationUsesVisibleOrderAndDisplayedParentsOfCompactedPackages() {
+        func node(_ path: String, _ children: [FileNode]? = nil, collapsed: [String] = []) -> FileNode {
+            FileNode(url: URL(fileURLWithPath: path), isDirectory: children != nil, children: children,
+                     collapsedAncestorPaths: collapsed)
+        }
+        let root = node("/p", [
+            node("/p/src", [node("/p/src/com/acme", [node("/p/src/com/acme/App.java")],
+                                   collapsed: ["/p/src/com"])]),
+            node("/p/README.md")
+        ])
+        var expanded: Set<String> = ["/p"]
+        var selection = ProjectTreeSelection()
+        func press(_ key: ProjectTreeNavigationKey, extending: Bool = false) {
+            selection.navigate(key, in: root, expandedPaths: &expanded, extending: extending)
+        }
+        press(.down)
+        #expect(selection.focusedPath == "/p")
+        press(.down)
+        #expect(selection.paths == ["/p/src"])
+        press(.right)
+        #expect(expanded.contains("/p/src"))
+        #expect(selection.focusedPath == "/p/src")
+        press(.right)
+        #expect(selection.focusedPath == "/p/src/com/acme")
+        press(.right)
+        #expect(expanded.isSuperset(of: ["/p/src/com/acme", "/p/src/com"]))
+        press(.down)
+        #expect(selection.focusedPath == "/p/src/com/acme/App.java")
+        press(.left)
+        #expect(selection.focusedPath == "/p/src/com/acme")
+        press(.left)
+        #expect(!expanded.contains("/p/src/com/acme") && !expanded.contains("/p/src/com"))
+        press(.left)
+        #expect(selection.focusedPath == "/p/src")
+        press(.left)
+        press(.down, extending: true)
+        #expect(selection.paths == ["/p/src", "/p/README.md"])
+        press(.down)
+        #expect(selection.paths == ["/p/README.md"])
+        press(.up)
+        #expect(selection.focusedPath == "/p/src")
+        press(.up)
+        press(.up)
+        #expect(selection.focusedPath == "/p")
+    }
+
+    @Test
+    @MainActor
+    func nativeDoubleClickActivatesOncePerClickAndDispatchesTheDoubleClick() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 24),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let row = ProjectTreeRowInteractionView(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        defer { window.close() }
+        window.contentView?.addSubview(row)
+        var activations = 0
+        var expansions = 0
+        var runs = 0
+        row.activate = { activations += 1 }
+        row.doubleClick = {
+            ProjectFileRowActivation.performDoubleClick(
+                isDirectory: true, isExecutableBinary: false,
+                toggleDirectory: { expansions += 1 }
+            ) { runs += 1 }
+        }
+        for count in [1, 2] {
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try #require(NSEvent.mouseEvent(
+                    with: type, location: NSPoint(x: 80, y: 12), modifierFlags: [], timestamp: 0,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: count,
+                    clickCount: count, pressure: 1))
+                if type == .leftMouseDown { row.mouseDown(with: event) } else { row.mouseUp(with: event) }
+            }
+        }
+        #expect(activations == 2)
+        #expect(expansions == 1)
+        #expect(runs == 0)
+    }
+
+    @Test
+    @MainActor
     func nativeClipboardRoundTripsMultipleFilesAndIgnoresText() {
         let pasteboard = NSPasteboard(name: .init("lithe-file-test-" + UUID().uuidString))
         defer { pasteboard.releaseGlobally() }

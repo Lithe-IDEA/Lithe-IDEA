@@ -1,6 +1,10 @@
 import Foundation
 import LitheCoreContracts
 
+enum ProjectTreeNavigationKey: UInt16 {
+    case left = 123, right = 124, down = 125, up = 126
+}
+
 /// Selection follows the displayed tree order, including only expanded children.
 struct ProjectTreeSelection: Equatable {
     private(set) var paths: Set<String> = []
@@ -102,5 +106,38 @@ struct ProjectTreeSelection: Equatable {
 
     static func visibleNodes(in root: FileNode, expandedPaths: Set<String>) -> [FileNode] {
         visibleRows(in: root, expandedPaths: expandedPaths).map(\.node)
+    }
+
+    /// Navigation uses displayed depth, including compacted packages, rather
+    /// than filesystem parents. Moving selection never opens an editor.
+    mutating func navigate(_ key: ProjectTreeNavigationKey, in root: FileNode,
+                           expandedPaths: inout Set<String>, extending: Bool) {
+        let rows = Self.visibleRows(in: root, expandedPaths: expandedPaths)
+        guard !rows.isEmpty else { return }
+        guard let index = rows.firstIndex(where: { $0.id == focusedPath }) else {
+            select(rows[0].id, visiblePaths: [], extending: false, toggling: false)
+            return
+        }
+        let row = rows[index]
+        var target = index
+        switch key {
+        case .up: target = max(0, index - 1)
+        case .down: target = min(rows.count - 1, index + 1)
+        case .right:
+            guard row.node.isDirectory else { return }
+            if expandedPaths.insert(row.id).inserted {
+                expandedPaths.formUnion(row.node.collapsedAncestorPaths)
+                return
+            }
+            if index + 1 < rows.count, rows[index + 1].depth > row.depth { target = index + 1 }
+        case .left:
+            if row.node.isDirectory, expandedPaths.remove(row.id) != nil {
+                row.node.collapsedAncestorPaths.forEach { expandedPaths.remove($0) }
+                return
+            }
+            if let parent = rows[..<index].lastIndex(where: { $0.depth < row.depth }) { target = parent }
+        }
+        select(rows[target].id, visiblePaths: rows.map(\.id),
+               extending: extending && (key == .up || key == .down), toggling: false)
     }
 }

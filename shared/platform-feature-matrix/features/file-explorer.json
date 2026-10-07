@@ -6,7 +6,10 @@
   "macos": {
     "evidence": [
       "macos/Sources/Lithe/Views/Workspace/ProjectSidebarView.swift",
-      "macos/Sources/Lithe/Models/Workspace"
+      "macos/Sources/Lithe/Models/Workspace",
+      "macos/Sources/Lithe/Platform/MacOS/UI/ProjectTreeKeyboardCommands.swift",
+      "macos/Sources/Lithe/Views/Workspace/ProjectTreeSelection.swift",
+      "macos/Tests/LitheTests/ProjectTreeSelectionTests.swift"
     ],
     "implementationStatus": "implemented",
     "verificationStatus": "pending"
@@ -20,5 +23,5 @@
     "verificationStatus": "pending"
   },
   "owner": "Workspace",
-  "verification": "浏览目录、展开/折叠、打开资源并在文件变更后刷新树。"
+  "verification": "浏览目录、展开/折叠、打开资源并在文件变更后刷新树。 点击目录名称后上下键按可见行移动选择，右键展开目录并再次右键进入首个子项，左键折叠或返回显示父项；双击目录名称展开/折叠，单击与修饰键多选保持独立。验证压缩 Java 包、列表首尾、Shift 上下范围选择与自动滚动；方向键不送到编辑器，点击编辑器或转移到搜索输入框后恢复其按键处理。"
 }

@@ -5,7 +5,8 @@
 ## 先说结论
 
 目录是一个独立选项，选择目录不会让它的后代一起高亮。目录名称负责选择，
-箭头负责展开；拖动一个已选项时携带完整选择集合，移动目录时按整个目录处理。
+箭头或目录名称双击负责展开；上下方向键移动选择，左右方向键展开、折叠或进入显示子项、返回显示父项。
+拖动一个已选项时携带完整选择集合，移动目录时按整个目录处理。
 macOS 使用系统多文件拖动，工作区模块继续负责实际文件操作及文档、历史和目录标记更新。
 
 ## 问题
@@ -22,6 +23,10 @@ macOS 使用系统多文件拖动，工作区模块继续负责实际文件操�
 
 - 行高亮和右键目标只使用明确选择集合。⌘ 点击增减单项，Shift 只在需要范围时
   读取可见行顺序，⌘A 保留焦点项同级语义。
+- 文件树点击后的键盘归属由原生事件适配器维护，方向键被消费后不能继续送到编辑器；
+  点击树外或后续键盘焦点改变时释放归属，搜索输入框仍处理自己的方向键与文字快捷键。
+  上下移动只选择可见行，不打开文件；Shift 上下扩展范围，左右按显示层级处理压缩包，
+  选择变化后滚动到焦点项。目录名称单击只选择，双击才展开或折叠。
 - 原生鼠标适配器等待松开鼠标才执行普通点击；达到拖动阈值后只启动拖动，
   不先把原多选缩成单选。Control 点击交给既有右键菜单。
 - AppKit（macOS 原生界面框架）一次拖动携带多个文件 URL；项目树只接收同窗口、
@@ -45,7 +50,8 @@ macOS 使用系统多文件拖动，工作区模块继续负责实际文件操�
 
 - 仅修复高亮：无法补齐批量移动，不能满足完整操作链。
 - 单个 SwiftUI URL 拖动：不能表达多个系统文件拖动项；使用系统原生会话保留互操作。
-- 点击目录仍展开：把选择和大目录布局绑在同一次动作上，不采用。
+- 点击目录仍展开：把选择和大目录布局绑在同一次动作上，不采用；显式双击和右方向键可展开。
+- 让方向键继续发给编辑器：树中选中了目录却操作编辑光标，违反当前操作目标，不采用。
 - 完整替换为原生树控件：会扩大既有菜单、图标、定位和滚动的改动范围；本次保留 SwiftUI 行呈现。
 
 ## 后果
@@ -64,6 +70,8 @@ Windows 暂无该批量选择入口，矩阵保持缺失，不声明已同步实
 - `./scripts/verify-platform-feature-matrix.sh`
 - `./scripts/verify-agent-notes.sh`
 - macOS 实机分别测量大目录选择、展开与滚动，验证能滚动至末尾及定位到未显示行；同时回归修饰键、右键、目录与多文件拖动。
+- 点击目录名称后验证双击、上下左右与 Shift 上下、焦点项滚动；点击编辑器和搜索字段后
+  验证按键归属释放。
 
 - 项目根、目录、文件和多选右键菜单分别验证 Find in Files / Replace in Files；
   验证编辑器选中文字预填、查找输入框聚焦和替换预览/取消/确认，搜索范围仍为整个项目。
@@ -74,6 +82,7 @@ Windows 暂无该批量选择入口，矩阵保持缺失，不声明已同步实
 - `macos/Sources/Lithe/Views/Workspace/ProjectSidebarView.swift`
 - `macos/Sources/Lithe/Views/Workspace/ProjectTreeSelection.swift`
 - `macos/Sources/Lithe/Platform/MacOS/UI/ProjectTreeRowInteraction.swift`
+- `macos/Sources/Lithe/Platform/MacOS/UI/ProjectTreeKeyboardCommands.swift`
 - `macos/Sources/LitheWorkspaceModule/Application/WorkspaceFeatureModel.swift`
 - `macos/Tests/LitheTests/ProjectTreeSelectionTests.swift`
 - `macos/Tests/LitheTests/ProjectTreeBatchFileWorkflowTests.swift`

@@ -240,6 +240,21 @@ jobs:
           node .agents/skills/write-stable-tests/scripts/run-bun-tests-with-timing.mjs --suite-timeout-ms 60000 --report .artifacts/test-stability/windows-notifications.json -- src/features/notifications
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Test Java debug session ownership and cleanup
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $runner = ".agents/skills/write-stable-tests/scripts/run-bun-tests-with-timing.mjs"
+          # Isolate adapter spies and Monaco/native mocks from other debug suites.
+          node $runner --suite-timeout-ms 60000 --report .artifacts/test-stability/windows-debug-session-actions.json -- src/features/debugger/services/debug-session-actions.test.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node $runner --suite-timeout-ms 60000 --report .artifacts/test-stability/windows-debug-session-resources.json -- src/features/debugger/services/debug-session-resources.test.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node $runner --suite-timeout-ms 60000 --report .artifacts/test-stability/windows-monaco-debug-decorations.json -- src/features/debugger/services/monaco-debug-decorations.test.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node $runner --suite-timeout-ms 60000 --report .artifacts/test-stability/windows-maven-module-debug.json -- src/features/maven/services/maven-module-debug.test.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Test Java file and package creation
         shell: pwsh
         timeout-minutes: 6

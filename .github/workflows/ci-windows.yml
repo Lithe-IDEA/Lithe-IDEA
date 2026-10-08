@@ -254,6 +254,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node $runner --suite-timeout-ms 60000 --report .artifacts/test-stability/windows-maven-module-debug.json -- src/features/maven/services/maven-module-debug.test.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node $runner --suite-timeout-ms 60000 --report .artifacts/test-stability/windows-debugger-breakpoint-paths.json -- src/features/debugger/stores/debugger-breakpoints.test.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Test Java file and package creation
         shell: pwsh

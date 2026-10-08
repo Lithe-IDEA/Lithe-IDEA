@@ -1,4 +1,4 @@
-//! Shared API-key recovery budgets, cancellation and failure normalization.
+//! Shared prompt activity, API-key recovery budgets and failure normalization.
 //!
 //! The native CLI has one retry budget for permanent and temporary errors and
 //! may honor minutes of Retry-After. Disable that layer through public options;
@@ -26,8 +26,27 @@ pub(crate) const MAX_ATTEMPTS: u32 = 5;
 /// Total reconnecting window, excluding the first attempt and cancellation ACK.
 pub(crate) const RETRY_WINDOW: Duration = Duration::from_secs(20);
 
+/// Both native clients use this advisory threshold; silence cannot prove a stall.
+pub(crate) fn quiet_notice_delay() -> Duration {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Policy {
+        quiet_notice_milliseconds: u64,
+    }
+    static DELAY: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *DELAY.get_or_init(|| {
+        let policy: Policy = serde_json::from_str(include_str!(
+            "../../../shared/contracts/agent-turn-policy.json"
+        ))
+        .expect("valid bundled Agent turn policy");
+        Duration::from_millis(policy.quiet_notice_milliseconds)
+    })
+}
+
 #[derive(Clone)]
 pub(crate) struct State {
+    last_progress: Instant,
+    pending_permissions: usize,
     eligible: bool,
     pub(crate) cancelling: bool,
     deadline: Option<Instant>,
@@ -45,6 +64,8 @@ pub(crate) struct State {
 impl State {
     pub(crate) fn new(enabled: bool) -> Self {
         Self {
+            last_progress: Instant::now(),
+            pending_permissions: 0,
             eligible: enabled,
             cancelling: false,
             deadline: None,
@@ -68,8 +89,9 @@ impl State {
     }
 
     /// Output or a permission request makes replay unsafe and ends the short
-    /// retry window. Normal reasoning, tool and permission limits still apply.
+    /// retry window. The upstream Agent still owns its model and tool budgets.
     pub(crate) fn progress(&mut self) {
+        self.last_progress = Instant::now();
         self.eligible = false;
         self.native_replay_safe = false;
         self.deadline = None;
@@ -80,6 +102,16 @@ impl State {
         if self.stop_message.is_some() {
             self.deadline = Some(Instant::now());
         }
+    }
+
+    pub(crate) fn permission_started(&mut self) {
+        self.progress();
+        self.pending_permissions += 1;
+    }
+
+    pub(crate) fn permission_finished(&mut self) {
+        self.pending_permissions = self.pending_permissions.saturating_sub(1);
+        self.progress();
     }
 
     /// AIR's public failure extension suppresses synthetic assistant error text.
@@ -165,7 +197,7 @@ impl State {
             Some(message) if self.deadline.is_some() => {
                 format!("Reconnecting exceeded 20 seconds. The turn was stopped. {message}")
             }
-            _ => crate::PROMPT_TIMEOUT_MESSAGE.into(),
+            _ => "The Agent connection stopped before the turn finished.".into(),
         }
     }
 
@@ -387,20 +419,41 @@ pub(crate) async fn run(
 
 /// Keep the in-flight future alive on timeout so its owner can cancel and await
 /// acknowledgment before releasing the turn or stopping the process tree.
-pub(crate) async fn wait<F, T>(response: F, mut changes: watch::Receiver<State>) -> Result<T, ()>
+pub(crate) async fn wait<F, T>(
+    response: F,
+    mut changes: watch::Receiver<State>,
+    activity: impl Fn(bool),
+) -> Result<T, ()>
 where
     F: Future<Output = T>,
 {
-    let absolute = Instant::now() + crate::PROMPT_TIMEOUT;
+    let mut quiet_since = None;
     tokio::pin!(response);
     loop {
-        let deadline = changes
-            .borrow()
-            .deadline
-            .map_or(absolute, |retry| retry.min(absolute));
+        let state = changes.borrow().clone();
+        let suppressed =
+            state.cancelling || state.pending_permissions > 0 || state.deadline.is_some();
+        if quiet_since.is_some_and(|previous| previous != state.last_progress || suppressed) {
+            quiet_since = None;
+            activity(false);
+        }
+        let notice = (!suppressed && quiet_since.is_none())
+            .then(|| state.last_progress + quiet_notice_delay());
+        // Only a reported recovery failure has a hard deadline. Normal prompts,
+        // silent tools and user decisions remain active until their owner ends them.
+        let deadline = state.deadline.or(notice);
         tokio::select! {
             result = &mut response => return Ok(result),
-            _ = tokio::time::sleep_until(deadline) => return Err(()),
+            _ = async {
+                match deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if state.deadline.is_some() { return Err(()); }
+                quiet_since = Some(state.last_progress);
+                activity(true);
+            },
             changed = changes.changed() => if changed.is_err() { return Err(()); },
         }
     }

@@ -2712,3 +2712,6 @@
 "Deep reasoning for complex tasks" = "深度推理，适合复杂任务";
 "Extra deep reasoning for demanding tasks" = "额外深度推理，适合高难度任务";
 "Maximum reasoning depth" = "使用最大推理深度";
+
+"No recent progress has been received. The task is still active." = "暂未收到新的进度，任务仍在进行。";
+"Continue waiting" = "继续等待";

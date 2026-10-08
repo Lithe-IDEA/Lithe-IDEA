@@ -291,6 +291,20 @@ fn serialized_events_match_the_shared_fixture() {
             },
         ),
         (
+            "turnActivityQuiet",
+            AgentEvent::TurnActivity {
+                session_id: "session-1".into(),
+                quiet: true,
+            },
+        ),
+        (
+            "turnActivityResumed",
+            AgentEvent::TurnActivity {
+                session_id: "session-1".into(),
+                quiet: false,
+            },
+        ),
+        (
             "turnRetrying",
             AgentEvent::TurnRetrying {
                 session_id: "session-1".into(),
@@ -1669,7 +1683,7 @@ async fn permission_is_answered_by_the_user_and_rejected_by_cancel() {
 
 // Regression: a permission request registered after the handle rejected the
 // session's pending requests, but before the loop processed the cancel, must
-// still be answered instead of waiting for its five-minute timeout.
+// still be answered instead of remaining pending after cancellation.
 #[tokio::test(flavor = "current_thread")]
 async fn cancel_also_rejects_a_permission_registered_after_the_handle_check() {
     let mut harness = Harness::ready().await;
@@ -1781,73 +1795,37 @@ async fn a_busy_session_rejects_a_second_prompt_without_stopping() {
     assert_eq!(harness.stop().await, Ok(()));
 }
 
+// Quiet prompts remain busy even far beyond the former ten-minute cap.
 #[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn an_unresponsive_prompt_is_bounded_and_stops_before_a_stale_turn_can_overlap() {
-    let mut harness = Harness::ready().await;
-    harness.open_session("session-1").await;
-    harness.send(json!({ "kind": "prompt", "sessionId": "session-1", "text": "wait" }));
-    let _prompt = harness.agent.expect("session/prompt").await;
-
-    tokio::time::advance(PROMPT_TIMEOUT).await;
-    assert!(matches!(
-        harness.event().await,
-        AgentEvent::TurnCancelling { session_id } if session_id == "session-1"
-    ));
-    harness.agent.expect("session/cancel").await;
-    assert!(
-        harness.events.try_recv().is_err(),
-        "no terminal failure during cancellation grace"
-    );
-
-    // The session remains busy during the bounded cancellation grace period.
-    harness.send(json!({ "kind": "prompt", "sessionId": "session-1", "text": "overlap" }));
-    assert!(matches!(
-        harness.event().await,
-        AgentEvent::RequestFailed { session_id, .. } if session_id.as_deref() == Some("session-1")
-    ));
-
-    tokio::time::advance(CANCEL_TIMEOUT).await;
-    assert!(matches!(
-        harness.event().await,
-        AgentEvent::RequestFailed { session_id, message, .. }
-            if session_id.as_deref() == Some("session-1") && message == PROMPT_TIMEOUT_MESSAGE
-    ));
-    let result = tokio::time::timeout(WAIT, &mut harness.connection)
-        .await
-        .expect("timed-out prompt stops the connection before the test deadline")
-        .expect("connection task joins");
-    assert!(result.is_err());
-}
-
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn a_timed_out_prompt_releases_the_session_after_cancellation_acknowledgement() {
+async fn a_long_silent_prompt_warns_without_cancelling_or_replaying() {
     let mut harness = Harness::ready().await;
     harness.open_session("session-1").await;
     harness.send(json!({ "kind": "prompt", "sessionId": "session-1", "text": "wait" }));
     let prompt = harness.agent.expect("session/prompt").await;
-
-    tokio::time::advance(PROMPT_TIMEOUT).await;
+    tokio::time::advance(prompt_retry::quiet_notice_delay()).await;
     assert!(matches!(
         harness.event().await,
-        AgentEvent::TurnCancelling { session_id } if session_id == "session-1"
+        AgentEvent::TurnActivity { quiet: true, .. }
     ));
-    harness.agent.expect("session/cancel").await;
+    tokio::time::advance(Duration::from_secs(60 * 60)).await;
     assert!(
         harness.events.try_recv().is_err(),
-        "no terminal failure during cancellation grace"
+        "silence is advisory only"
     );
-    harness
-        .agent
-        .reply(&prompt, json!({ "stopReason": "cancelled" }))
-        .await;
+    harness.send(json!({ "kind": "prompt", "sessionId": "session-1", "text": "overlap" }));
     assert!(matches!(
         harness.event().await,
-        AgentEvent::RequestFailed { session_id, message, .. }
-            if session_id.as_deref() == Some("session-1") && message == PROMPT_TIMEOUT_MESSAGE
+        AgentEvent::RequestFailed { .. }
     ));
-
-    // The acknowledged timeout is complete; a later prompt can use the same connection.
-    harness.send(json!({ "kind": "prompt", "sessionId": "session-1", "text": "again" }));
+    harness
+        .agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    assert!(
+        matches!(harness.event().await, AgentEvent::TurnFinished { stop_reason, .. } if stop_reason == "end_turn")
+    );
+    // There was no automatic cancel or replay before this new prompt.
+    harness.send(json!({ "kind": "prompt", "sessionId": "session-1", "text": "next" }));
     let next = harness.agent.expect("session/prompt").await;
     harness
         .agent
@@ -1855,9 +1833,189 @@ async fn a_timed_out_prompt_releases_the_session_after_cancellation_acknowledgem
         .await;
     assert!(matches!(
         harness.event().await,
-        AgentEvent::TurnFinished { session_id, stop_reason, .. }
-            if session_id == "session-1" && stop_reason == "end_turn"
+        AgentEvent::TurnFinished { .. }
     ));
+    assert_eq!(harness.stop().await, Ok(()));
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn progress_resets_the_advisory_and_long_tools_can_complete() {
+    let mut harness = Harness::ready().await;
+    harness.open_session("session-1").await;
+    harness.send(json!({ "kind": "prompt", "sessionId": "session-1", "text": "build" }));
+    let prompt = harness.agent.expect("session/prompt").await;
+    // Successive tool updates keep one turn alive for more than ten minutes.
+    for _ in 0..5 {
+        tokio::time::advance(prompt_retry::quiet_notice_delay() / 2).await;
+        harness.agent.write(json!({ "jsonrpc": "2.0", "method": "session/update", "params": {
+            "sessionId": "session-1", "update": { "sessionUpdate": "tool_call", "toolCallId": "build", "title": "Build", "status": "in_progress" }
+        }})).await;
+        assert!(matches!(harness.event().await, AgentEvent::Update { .. }));
+    }
+    tokio::time::advance(prompt_retry::quiet_notice_delay()).await;
+    assert!(matches!(
+        harness.event().await,
+        AgentEvent::TurnActivity { quiet: true, .. }
+    ));
+    harness.agent.write(json!({ "jsonrpc": "2.0", "method": "session/update", "params": {
+        "sessionId": "session-1", "update": { "sessionUpdate": "tool_call_update", "toolCallId": "build", "status": "completed" }
+    }})).await;
+    assert!(matches!(harness.event().await, AgentEvent::Update { .. }));
+    assert!(matches!(
+        harness.event().await,
+        AgentEvent::TurnActivity { quiet: false, .. }
+    ));
+    tokio::time::advance(prompt_retry::quiet_notice_delay() / 2).await;
+    assert!(harness.events.try_recv().is_err());
+    harness
+        .agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    assert!(matches!(
+        harness.event().await,
+        AgentEvent::TurnFinished { .. }
+    ));
+    assert_eq!(harness.stop().await, Ok(()));
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn permission_wait_has_no_deadline_and_quiet_tracking_resumes_after_all_answers() {
+    let mut harness = Harness::ready().await;
+    harness.open_session("session-1").await;
+    harness.send(json!({ "kind": "prompt", "sessionId": "session-1", "text": "run" }));
+    let prompt = harness.agent.expect("session/prompt").await;
+    let mut requests = Vec::new();
+    for id in [801, 802] {
+        harness.agent.write(json!({ "jsonrpc": "2.0", "id": id, "method": "session/request_permission", "params": {
+            "sessionId": "session-1", "toolCall": { "toolCallId": format!("call-{id}"), "title": "Run tests" },
+            "options": [{ "optionId": "allow_once", "name": "Allow Once", "kind": "allow_once" }]
+        }})).await;
+        match harness.event().await {
+            AgentEvent::Permission { request_id, .. } => requests.push(request_id),
+            other => panic!("expected permission, got {other:?}"),
+        }
+    }
+    tokio::time::advance(Duration::from_secs(60 * 60)).await;
+    assert!(harness.events.try_recv().is_err());
+    answer_permission(
+        &harness.permissions,
+        &requests[0],
+        Some("allow_once".into()),
+    )
+    .unwrap();
+    let answer = harness.agent.next().await;
+    assert_eq!(answer["result"]["outcome"]["optionId"], "allow_once");
+    tokio::time::advance(Duration::from_secs(60 * 60)).await;
+    assert!(
+        harness.events.try_recv().is_err(),
+        "another permission is still pending"
+    );
+    answer_permission(
+        &harness.permissions,
+        &requests[1],
+        Some("allow_once".into()),
+    )
+    .unwrap();
+    let answer = harness.agent.next().await;
+    assert_eq!(answer["result"]["outcome"]["optionId"], "allow_once");
+    tokio::time::advance(prompt_retry::quiet_notice_delay()).await;
+    assert!(matches!(
+        harness.event().await,
+        AgentEvent::TurnActivity { quiet: true, .. }
+    ));
+    harness
+        .agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    assert!(matches!(
+        harness.event().await,
+        AgentEvent::TurnFinished { .. }
+    ));
+    assert_eq!(harness.stop().await, Ok(()));
+}
+
+// A user approval cannot hold the SDK dispatch loop or hide another session's progress.
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn pending_permission_does_not_block_other_sessions_and_exit_settles_the_connection() {
+    let mut harness = Harness::ready().await;
+    harness.open_session("session-a").await;
+    harness.open_session("session-b").await;
+    for session in ["session-a", "session-b"] {
+        harness.send(json!({ "kind": "prompt", "sessionId": session, "text": "run" }));
+        harness.agent.expect("session/prompt").await;
+    }
+    harness.agent.write(json!({ "jsonrpc": "2.0", "id": 901, "method": "session/request_permission", "params": {
+        "sessionId": "session-a", "toolCall": { "toolCallId": "approval", "title": "Run tests" },
+        "options": [{ "optionId": "allow_once", "name": "Allow Once", "kind": "allow_once" }]
+    }})).await;
+    assert!(matches!(
+        harness.event().await,
+        AgentEvent::Permission { .. }
+    ));
+    harness.agent.write(json!({ "jsonrpc": "2.0", "method": "session/update", "params": {
+        "sessionId": "session-b", "update": { "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "Other work continues" } }
+    }})).await;
+    assert!(
+        matches!(harness.event().await, AgentEvent::Update { session_id, .. } if session_id == "session-b")
+    );
+    tokio::time::advance(prompt_retry::quiet_notice_delay()).await;
+    assert!(
+        matches!(harness.event().await, AgentEvent::TurnActivity { session_id, quiet: true } if session_id == "session-b")
+    );
+    assert!(
+        harness.events.try_recv().is_err(),
+        "approval wait is not quiet work"
+    );
+    harness
+        .agent
+        .writer
+        .shutdown()
+        .await
+        .expect("agent exits with pending approval");
+    let result = tokio::time::timeout(WAIT, &mut harness.connection)
+        .await
+        .expect("EOF is dispatched despite pending approval")
+        .expect("connection joins");
+    assert!(result.is_err());
+    assert!(
+        harness.permissions.lock().unwrap().is_empty(),
+        "connection exit releases approval senders"
+    );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn user_stop_after_quiet_notice_retains_busy_state_until_acknowledged() {
+    let mut harness = Harness::ready().await;
+    harness.open_session("session-1").await;
+    harness.send(json!({ "kind": "prompt", "sessionId": "session-1", "text": "wait" }));
+    let prompt = harness.agent.expect("session/prompt").await;
+    tokio::time::advance(prompt_retry::quiet_notice_delay()).await;
+    assert!(matches!(
+        harness.event().await,
+        AgentEvent::TurnActivity { quiet: true, .. }
+    ));
+    harness.send(json!({ "kind": "cancel", "sessionId": "session-1" }));
+    harness.agent.expect("session/cancel").await;
+    assert!(matches!(
+        harness.event().await,
+        AgentEvent::TurnCancelling { .. }
+    ));
+    assert!(matches!(
+        harness.event().await,
+        AgentEvent::TurnActivity { quiet: false, .. }
+    ));
+    harness.send(json!({ "kind": "prompt", "sessionId": "session-1", "text": "overlap" }));
+    assert!(matches!(
+        harness.event().await,
+        AgentEvent::RequestFailed { .. }
+    ));
+    harness
+        .agent
+        .reply(&prompt, json!({ "stopReason": "cancelled" }))
+        .await;
+    assert!(
+        matches!(harness.event().await, AgentEvent::TurnFinished { stop_reason, .. } if stop_reason == "cancelled")
+    );
     assert_eq!(harness.stop().await, Ok(()));
 }
 

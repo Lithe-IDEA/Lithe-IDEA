@@ -38,6 +38,8 @@
       ]
     },
     "turnCancelling": { "kind": "turnCancelling", "sessionId": "session-1" },
+    "turnActivityQuiet": { "kind": "turnActivity", "sessionId": "session-1", "quiet": true },
+    "turnActivityResumed": { "kind": "turnActivity", "sessionId": "session-1", "quiet": false },
     "turnRetrying": { "kind": "turnRetrying", "sessionId": "session-1", "turnId": "host-turn-1", "attempt": 2, "maxAttempts": 5 },
     "claudeSessionFailure": {
       "kind": "update", "sessionId": "session-1",

@@ -9,6 +9,51 @@ import Testing
 @MainActor
 struct AgentConversationFeatureModelTests {
     @Test
+    func quietNoticeKeepsTheTurnBusyAndContinueWaitingDoesNotReplayIt() async throws {
+        try await withStatisticsFeature { feature, connection, clock in
+            try feature.send("Build the project")
+            try feature.receive(event("sessionCreated", ["token": connection.commands.last?["token"] as Any]))
+            let turn = feature.selectedConversation?.activeTurn
+            let commandCount = connection.commands.count
+            clock.advance(3600)
+            try feature.receive(event("turnActivityQuiet"))
+            #expect(feature.selectedConversation?.isQuiet == true)
+            #expect(feature.selectedConversation?.isResponding == true)
+            #expect(feature.selectedConversation?.activeTurn == turn)
+            #expect(feature.selectedConversation?.errorMessage == nil)
+            #expect(throws: AgentConversationError.sessionBusy) { try feature.send("Overlap") }
+            feature.continueWaiting()
+            #expect(feature.selectedConversation?.isQuiet == false)
+            #expect(connection.commands.count == commandCount)
+            try feature.receive(event("turnActivityQuiet"))
+            try feature.receive(event("turnActivityResumed"))
+            #expect(feature.selectedConversation?.isQuiet == false)
+            try feature.receive(event("turnFinished"))
+            #expect(feature.selectedConversation?.completedTurns.last?.duration == 3600)
+            try feature.receive(event("turnActivityQuiet"))
+            #expect(feature.selectedConversation?.isQuiet == false)
+        }
+    }
+
+    @Test
+    func quietNoticeIsScopedToItsSessionAndCannotOverrideStopping() async throws {
+        try await withStatisticsFeature { feature, connection, _ in
+            try feature.send("First turn")
+            try feature.receive(event("sessionCreated", ["token": connection.commands.last?["token"] as Any]))
+            feature.startNewConversation()
+            try feature.send("Second turn")
+            try feature.receive(event("sessionCreated", ["token": connection.commands.last?["token"] as Any, "sessionId": "session-2"]))
+            try feature.receive(event("turnActivityQuiet"))
+            #expect(feature.conversations["session-1"]?.isQuiet == true)
+            #expect(feature.selectedConversation?.isQuiet == false)
+            feature.cancel()
+            try feature.receive(event("turnActivityQuiet", ["sessionId": "session-2"]))
+            #expect(feature.selectedConversation?.isQuiet == false)
+            #expect(feature.selectedConversation?.responseStatus == .stopping)
+        }
+    }
+
+    @Test
     func codexNativeFailureMetadataAndHostCountsKeepOneTimedTurn() async throws {
         try await withStatisticsFeature { feature, connection, clock in
             try feature.send("Try Codex")

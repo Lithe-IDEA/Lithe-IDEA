@@ -8,6 +8,34 @@ import Testing
 @Suite("Agent conversation presentation")
 struct AgentConversationPresentationTests {
     @Test
+    func quietNoticeFitsBothAppearancesAndPreservesPermissionAndStopPriority() throws {
+        for status in [AgentResponseStatus.waitingForPermission, .stopping, .retrying] {
+            #expect(!AgentResponseStatusRow(responseStatus: status, isQuiet: true).showsQuietNotice)
+        }
+        for (name, scheme, width) in [("dark-narrow", ColorScheme.dark, 280.0), ("light-narrow", .light, 280.0),
+                                     ("dark-wide", .dark, 620.0), ("light-wide", .light, 620.0)] {
+            let row = AgentResponseStatusRow(responseStatus: .runningTools, isQuiet: true)
+            #expect(row.showsQuietNotice)
+            let host = NSHostingView(rootView: row.padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(AgentPanelStyle.canvas).environment(\.colorScheme, scheme))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 160),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            defer { window.close() }
+            window.contentView = host
+            host.frame.size = NSSize(width: width, height: 160)
+            host.layoutSubtreeIfNeeded()
+            #expect(host.fittingSize.height <= 160, "Quiet notice and actions must fit a narrow panel")
+            if let folder = ProcessInfo.processInfo.environment["LITHE_AGENT_STATISTICS_SCREENSHOTS"] {
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                try data.write(to: URL(fileURLWithPath: folder).appendingPathComponent("quiet-\(name).png"))
+            }
+        }
+    }
+
+    @Test
     func turnFootersRemainAfterTheirToolsAndBeforeTheNextUserMessage() throws {
         let start = ContinuousClock.Instant.now
         var first = AgentTurnStatistics(id: "user-1", startedAt: start)

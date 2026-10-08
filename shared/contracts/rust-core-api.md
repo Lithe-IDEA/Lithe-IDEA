@@ -175,7 +175,7 @@ include all windows and reset times; API-key connections show no quota chip.
 `listSessions`, `setConfigOption`, `prompt`, `cancel`, `permission`, `authenticate`,
 or `refreshQuota`. Results arrive as events:
 `ready`, `sessionCreated`, `sessionLoaded`, `sessions`, `update`, `permission`,
-`sessionConfigured`, `turnRetrying`, `turnCancelling`, `turnFinished`, `requestFailed`, `stopped`,
+`sessionConfigured`, `turnRetrying`, `turnActivity`, `turnCancelling`, `turnFinished`, `requestFailed`, `stopped`,
 `authenticationRequired`, `authenticating`, `account`, `quota`, and `quotaFailed`. Commands and events, including
 their camel-case field names, are fixed by
 `shared/fixtures/agent/acp-events-v1.json`; `token` values are echoed so a caller
@@ -234,22 +234,33 @@ explicit recovery prevents another message from entering a lost cancelled turn.
 Other sessions on the same process are also detached on this failure.
 Normal cancellation does not restart the process.
 
-Every `prompt` also has a ten-minute absolute wall-clock limit, including tool
-execution and permission waits. This is a safety bound for an upstream request
-that stops responding; it is not an inactivity timer and progress updates do not
-extend it. On expiry the host sends the same `session/cancel`, emits
-`turnCancelling`, then waits up to the existing ten-second cancellation grace
-period before emitting `requestFailed` with an actionable timeout message. An
-acknowledged cancellation releases the session; otherwise the connection and its
-process tree are stopped. No terminal event is emitted during the grace period,
-so consumers keep the session busy. A late response cannot overlap a new prompt
-or turn an expired request into a successful completion.
+Normal `prompt` turns have no absolute wall-clock deadline. Silence alone cannot
+prove that model reasoning or a tool has stalled. After five minutes without
+reported reply, thought, plan or tool progress, the host emits advisory
+`turnActivity` with `sessionId` and `quiet: true`, once per quiet interval. Actual
+progress emits `quiet: false` and starts a fresh advisory interval. The threshold
+is fixed in `agent-turn-policy.json`, consumed by the shared Host and the Windows
+frontend monitor. This notice never cancels, releases or replays the prompt.
+Clients offer continue waiting (dismiss only) and stop, preserving busy state,
+transcript, edits and elapsed time. Completion, failure and disconnect clear it.
+Permission and stopping states take precedence over the advisory.
+
+Permission decisions have no timer. The host tracks all pending permissions in
+that turn and suspends the quiet advisory until all are answered, then starts a
+fresh interval. Registration stays ordered under the permission/turn locks;
+waiting and responding run in an SDK-owned task so inbound updates, additional
+permission requests and connection EOF are not blocked. Cancel, terminal prompt
+response and connection shutdown settle every pending request with `cancelled`.
+Initialization, session/configuration requests, explicit failure recovery and
+cancellation acknowledgment retain their own bounded deadlines. Tool execution
+and model-request budgets belong to the upstream Agent. This policy does not
+provide a new user-configurable task budget.
 
 The API-key reconnecting window is twenty seconds from the first temporary
 failure, in addition to the initial request and at most ten seconds to confirm
 cancellation. It does not reset on each retry. Actual progress removes this
-short window and prohibits whole-turn replay; the original ten-minute absolute
-limit still applies. Codex may safely recover a later stream interruption in
+short window and prohibits whole-turn replay; normal turn duration remains unlimited.
+Codex may safely recover a later stream interruption in
 its native engine; a new recovery incident after progress receives a new short
 window and still cannot replay the whole turn. Expiry retains the same busy/cancel/acknowledgment semantics
 above and reports the last provider error. During backoff, user cancellation
@@ -259,7 +270,7 @@ a unique Host or native `turnId`, `attempt` (2 through 5), and
 “Reconnecting 2/5…” with elapsed time; it clears counts on progress or completion
 and ignores retries for retired turns. No silent timer implies thinking or retry.
 Generic ACP support does not imply control of its retry engine. Unadapted agents
-retain their native retry policy and the normal absolute prompt limit; reliable
+retain their native retry policy without a Host absolute prompt limit; reliable
 counts and a short recovery window require explicit provider recovery events or
 a verified configuration adapter. Lithe never applies blind prompt replay to
 arbitrary agents.

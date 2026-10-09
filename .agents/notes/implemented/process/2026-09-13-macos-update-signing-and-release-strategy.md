@@ -37,7 +37,7 @@ PHP Support 作为独立 GitHub Release asset 发布，不再把“能否使用 
 证书”当成是否生成插件包的条件。构建阶段先完成原生 bundle 的代码签名，再由
 `LithePluginPackageSigner` 使用 `LITHE_PLUGIN_PACKAGE_PRIVATE_KEY` 为包内每个文件
 生成 SHA-256 清单和 Ed25519 签名；签名文档本身不进入被签名文件列表，避免验证时
-出现自引用。Lithe 内置 `lithe-official-plugins-v1` 公钥，安装时先验证原生 bundle，
+出现自引用。初始版本内置 `lithe-official-plugins-v1` 公钥；密钥重置后的版本改用 `lithe-official-plugins-v2`，安装时先验证原生 bundle，
 再验证完整包清单、插件 ID 和版本，任一文件被替换都会拒绝安装。
 
 stable 和 preview 工作流都必须配置同一 repository secret

@@ -22,7 +22,7 @@ concurrency:
 jobs:
   release:
     name: Build and publish Lithe for Windows
-    if: github.actor == github.repository_owner
+    if: github.actor == github.repository_owner || github.actor == vars.LITHE_RELEASE_ACTOR
     runs-on: windows-latest
     outputs:
       tag: ${{ steps.version.outputs.tag }}

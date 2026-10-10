@@ -1,10 +1,7 @@
 # Registered by the standalone preview repository.
-name: Release macOS
+name: Verify published v0.6.0
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
   workflow_dispatch:
     inputs:
       version:
@@ -24,9 +21,83 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify-public-windows:
+    name: Verify public Windows x64 installer
+    if: inputs.version == '0.6.0' && !inputs.publish && (github.actor == github.repository_owner || github.actor == vars.LITHE_RELEASE_ACTOR)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 65534b964a336667dfe1675f36c7e0f5d1623f7d
+      - name: Verify public download, checksum, install and launch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory dist | Out-Null
+          $asset = 'Lithe-0.6.0-windows-x64.exe'
+          foreach ($suffix in @('', '.sha256')) {
+            curl.exe --fail --location --retry 3 --connect-timeout 20 --max-time 240 `
+              "https://github.com/Lithe-IDEA/Lithe-IDEA/releases/download/v0.6.0/$asset$suffix" -o "dist/$asset$suffix"
+            if ($LASTEXITCODE -ne 0) { throw "Public download failed: $asset$suffix" }
+          }
+          $expected = ((Get-Content "dist/$asset.sha256").Trim() -split '\s+')[0]
+          $actual = (Get-FileHash "dist/$asset" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected -or $actual -ne '4c61f026b3c67a8fab1dd68f31a6c5b5c2cd473d153efa9b460ffbe4507ab21e') {
+            throw 'Public installer SHA-256 mismatch'
+          }
+          ./scripts/verify-windows-release-install.ps1 -Installer "dist/$asset" -Version 0.6.0
+          "$actual  $asset" >> $env:GITHUB_STEP_SUMMARY
+          'Public download, installation, GUI launch, cleanup and installation immutability passed.' >> $env:GITHUB_STEP_SUMMARY
+
+  verify-public-macos:
+    name: Verify public ${{ matrix.architecture }} installer
+    if: inputs.version == '0.6.0' && !inputs.publish && (github.actor == github.repository_owner || github.actor == vars.LITHE_RELEASE_ACTOR)
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            runner: macos-26
+          - architecture: x86_64
+            runner: macos-26-intel
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 65534b964a336667dfe1675f36c7e0f5d1623f7d
+      - name: Verify native runner and public download
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          test "$(uname -m)" = "$ARCHITECTURE"
+          mkdir -p dist
+          for suffix in '' .sha256 .edsig; do
+            asset="Lithe-0.6.0-${ARCHITECTURE}.dmg${suffix}"
+            curl --fail --location --retry 4 --retry-delay 10 --connect-timeout 20 --max-time 240 \
+              "https://github.com/Lithe-IDEA/Lithe-IDEA/releases/download/v0.6.0/$asset" -o "dist/$asset"
+          done
+          (cd dist && shasum -a 256 -c "Lithe-0.6.0-${ARCHITECTURE}.dmg.sha256")
+      - name: Verify public Sparkle signature, install and launch
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+          SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
+        run: |
+          test "$SPARKLE_PUBLIC_KEY" = 'ag28UMtFIbyM2xDlWfznVbIy9H4LVdKrYAhAQ6HaVRE='
+          dmg="dist/Lithe-0.6.0-${ARCHITECTURE}.dmg"
+          node scripts/verify-release-signature.mjs "$dmg" "$dmg.edsig" "$SPARKLE_PUBLIC_KEY"
+          zsh scripts/verify-macos-release-install.sh "$dmg" 0.6.0 "$SPARKLE_PUBLIC_KEY"
+          {
+            echo "Native runner: $(uname -m)"
+            cat "$dmg.sha256"
+            echo 'Public download, Sparkle signature, install, startup, cleanup and bundle immutability passed.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   prepare:
     name: Resolve release version
-    if: github.actor == github.repository_owner || github.actor == vars.LITHE_RELEASE_ACTOR
+    # This temporary branch only permits read-only workflow_dispatch audits.
+    if: github.event_name == 'push' && (github.actor == github.repository_owner || github.actor == vars.LITHE_RELEASE_ACTOR)
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}

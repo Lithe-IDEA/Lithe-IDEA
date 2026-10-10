@@ -52,7 +52,7 @@ struct MacPluginDistributionConfiguration: Equatable, Sendable {
     let releaseVersion: PluginVersion
 
     init(
-        releaseBaseURL: URL = URL(string: "https://github.com/1lck/Lithe-IDEA/releases/download")!,
+        releaseBaseURL: URL = URL(string: "https://github.com/Lithe-IDEA/Lithe-IDEA/releases/download")!,
         channel: Channel = MacPluginDistributionConfiguration.defaultChannel,
         architecture: String = MacPluginDistributionConfiguration.currentArchitecture,
         releaseVersion: PluginVersion = MacPluginDistributionConfiguration.defaultReleaseVersion

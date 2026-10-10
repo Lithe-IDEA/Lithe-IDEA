@@ -11,6 +11,10 @@ on:
         description: "Semantic version to release, for example 0.1.0"
         required: true
         type: string
+      publish:
+        description: "Publish assets after verification (disable for release preflight)"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -64,6 +68,16 @@ jobs:
         run: |
           notes_file="docs/releases/v${LITHE_VERSION}.md"
           node scripts/validate-stable-release-notes.mjs "$notes_file"
+
+      - name: Validate repository release contracts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+          zsh scripts/verify-runtime-bundle-immutability.sh
+          zsh scripts/verify-agent-notes.sh
+          bash scripts/verify-platform-feature-matrix.sh
+          bash .agents/skills/write-stable-tests/scripts/verify-test-stability.sh
+          node --test scripts/verify-release-signature.test.mjs
 
   build:
     name: Build ${{ matrix.architecture }} release
@@ -184,7 +198,19 @@ jobs:
           LITHE_VERSION: ${{ needs.prepare.outputs.version }}
           LITHE_BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
           LITHE_SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          LITHE_SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
         run: zsh scripts/create-sparkle-update.sh
+
+      - name: Verify updater key and installed application
+        timeout-minutes: 5
+        env:
+          LITHE_SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
+          LITHE_ARCH: ${{ matrix.architecture }}
+          LITHE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          dmg="dist/Lithe-${LITHE_VERSION}-${LITHE_ARCH}.dmg"
+          node scripts/verify-release-signature.mjs "$dmg" "$dmg.edsig" "$LITHE_SPARKLE_PUBLIC_KEY"
+          zsh scripts/verify-macos-release-install.sh "$dmg" "$LITHE_VERSION" "$LITHE_SPARKLE_PUBLIC_KEY"
 
       - name: Upload release assets
         uses: actions/upload-artifact@v7
@@ -215,6 +241,7 @@ jobs:
 
   publish:
     name: Publish macOS release
+    if: github.event_name != 'workflow_dispatch' || inputs.publish
     needs:
       - prepare
       - build
@@ -281,8 +308,10 @@ jobs:
           upload_args=(
             "dist/Lithe-${LITHE_VERSION}-arm64.dmg"
             "dist/Lithe-${LITHE_VERSION}-arm64.dmg.sha256"
+            "dist/Lithe-${LITHE_VERSION}-arm64.dmg.edsig"
             "dist/Lithe-${LITHE_VERSION}-x86_64.dmg"
             "dist/Lithe-${LITHE_VERSION}-x86_64.dmg.sha256"
+            "dist/Lithe-${LITHE_VERSION}-x86_64.dmg.edsig"
             "dist/latest-macos.json"
           )
           for architecture in arm64 x86_64; do
@@ -315,7 +344,7 @@ jobs:
       - name: Check out the default branch
         uses: actions/checkout@v7
         with:
-          ref: main
+          ref: ${{ github.event.repository.default_branch }}
 
       - name: Download release checksums
         env:
@@ -345,16 +374,17 @@ jobs:
         env:
           HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
         run: |
-          brew tap 1lck/lithe https://github.com/1lck/Lithe-IDEA.git
-          tap_path="$(brew --repository)/Library/Taps/1lck/homebrew-lithe"
+          brew tap lithe-idea/lithe "https://github.com/$GITHUB_REPOSITORY.git"
+          tap_path="$(brew --repository)/Library/Taps/lithe-idea/homebrew-lithe"
           cp "$GITHUB_WORKSPACE/Casks/lithe.rb" "$tap_path/Casks/lithe.rb"
-          brew style --cask 1lck/lithe/lithe
-          brew audit --cask --online 1lck/lithe/lithe
+          brew style --cask lithe-idea/lithe/lithe
+          brew audit --cask --online lithe-idea/lithe/lithe
 
       - name: Create or update the Cask pull request
         env:
           GH_TOKEN: ${{ github.token }}
           LITHE_VERSION: ${{ needs.publish.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           branch="automation/homebrew-cask-v${LITHE_VERSION}"
           git config user.name "github-actions[bot]"
@@ -370,7 +400,7 @@ jobs:
 
           existing_pr=$(gh pr list \
             --repo "$GITHUB_REPOSITORY" \
-            --base main \
+            --base "$DEFAULT_BRANCH" \
             --head "$branch" \
             --state open \
             --json url \
@@ -382,7 +412,7 @@ jobs:
 
           gh pr create \
             --repo "$GITHUB_REPOSITORY" \
-            --base main \
+            --base "$DEFAULT_BRANCH" \
             --head "$branch" \
             --title "lithe ${LITHE_VERSION}" \
             --body "Automated Homebrew Cask metadata update for Lithe ${LITHE_VERSION}."

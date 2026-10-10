@@ -21,6 +21,62 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify-public-update-signatures:
+    name: Verify public updater signatures
+    if: inputs.version == '0.6.0' && !inputs.publish && (github.actor == github.repository_owner || github.actor == vars.LITHE_RELEASE_ACTOR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 65534b964a336667dfe1675f36c7e0f5d1623f7d
+      - name: Verify public Windows updater with upstream Minisign
+        env:
+          UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+          mkdir -p dist
+          for asset in Lithe-0.6.0-windows-x64-updater.exe Lithe-0.6.0-windows-x64-updater.exe.sig latest.json; do
+            curl --fail --location --retry 3 --connect-timeout 20 --max-time 240 \
+              "https://github.com/Lithe-IDEA/Lithe-IDEA/releases/download/v0.6.0/$asset" -o "dist/$asset"
+          done
+          echo '4c61f026b3c67a8fab1dd68f31a6c5b5c2cd473d153efa9b460ffbe4507ab21e  dist/Lithe-0.6.0-windows-x64-updater.exe' | sha256sum -c -
+          node --input-type=module <<'JS'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const signature = readFileSync('dist/Lithe-0.6.0-windows-x64-updater.exe.sig', 'utf8').trim();
+          const manifest = JSON.parse(readFileSync('dist/latest.json', 'utf8'));
+          const platform = manifest.platforms['windows-x86_64'];
+          if (manifest.version !== '0.6.0' || platform.signature !== signature ||
+              platform.url !== 'https://github.com/Lithe-IDEA/Lithe-IDEA/releases/download/v0.6.0/Lithe-0.6.0-windows-x64-updater.exe') {
+            throw new Error('Public Windows updater manifest mismatch');
+          }
+          writeFileSync('dist/updater.pub', Buffer.from(process.env.UPDATER_PUBLIC_KEY, 'base64'));
+          writeFileSync('dist/updater.minisig', Buffer.from(signature, 'base64'));
+          JS
+          minisign -Vm dist/Lithe-0.6.0-windows-x64-updater.exe -p dist/updater.pub -x dist/updater.minisig
+      - name: Verify public Sparkle archives and feeds
+        env:
+          SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($architecture in @('arm64', 'x86_64')) {
+            $archive = "Lithe-0.6.0-$architecture.zip"
+            $feed = "appcast-$architecture.xml"
+            foreach ($asset in @($archive, $feed)) {
+              curl --fail --location --retry 3 --connect-timeout 20 --max-time 240 `
+                "https://github.com/Lithe-IDEA/Lithe-IDEA/releases/download/v0.6.0/$asset" -o "dist/$asset"
+              if ($LASTEXITCODE -ne 0) { throw "Public download failed: $asset" }
+            }
+            [xml]$appcast = Get-Content "dist/$feed"
+            $enclosure = $appcast.rss.channel.item.enclosure
+            if ($enclosure.url -ne "https://github.com/Lithe-IDEA/Lithe-IDEA/releases/download/v0.6.0/$archive" -or
+                [long]$enclosure.length -ne (Get-Item "dist/$archive").Length) { throw 'Public Sparkle feed mismatch' }
+            node scripts/verify-release-signature.mjs "dist/$archive" $enclosure.edSignature $env:SPARKLE_PUBLIC_KEY --inline
+            if ($LASTEXITCODE -ne 0) { throw 'Public Sparkle signature failed' }
+          }
+
   verify-public-windows:
     name: Verify public Windows x64 installer
     if: inputs.version == '0.6.0' && !inputs.publish && (github.actor == github.repository_owner || github.actor == vars.LITHE_RELEASE_ACTOR)
@@ -29,7 +85,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: 65534b964a336667dfe1675f36c7e0f5d1623f7d
+          ref: ${{ github.sha }}
       - name: Verify public download, checksum, install and launch
         shell: pwsh
         run: |

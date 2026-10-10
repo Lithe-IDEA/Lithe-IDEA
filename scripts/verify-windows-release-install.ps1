@@ -46,12 +46,14 @@ try {
     }
     $uninstallPath = Join-Path $installRoot 'uninstall.exe'
     if (Test-Path -LiteralPath $uninstallPath) {
-        $uninstaller = Start-Process -FilePath $uninstallPath -ArgumentList '/S' -WindowStyle Hidden -PassThru
+        # NSIS otherwise starts a temporary child and exits before removal finishes.
+        $uninstaller = Start-Process -FilePath $uninstallPath -ArgumentList @('/S', "_?=$installRoot") -WindowStyle Hidden -PassThru
         if (-not $uninstaller.WaitForExit(30000)) {
             & taskkill /PID $uninstaller.Id /T /F | Out-Null
             $uninstaller.WaitForExit(5000) | Out-Null
             throw 'Uninstaller exceeded 30 seconds'
         }
+        if ($uninstaller.ExitCode -ne 0) { throw "Uninstaller failed: $($uninstaller.ExitCode)" }
     }
     # The target is the literal directory created above, under the OS temporary directory.
     Remove-Item -LiteralPath $testRoot -Recurse -Force

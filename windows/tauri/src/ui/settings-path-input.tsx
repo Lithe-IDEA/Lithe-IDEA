@@ -63,7 +63,7 @@ export default function SettingsPathInput({
         <ComboboxEmpty>{t("ui.noMatchingOptions")}</ComboboxEmpty>
         <ComboboxList>
           {(path: string) => (
-            <ComboboxItem value={path}>
+            <ComboboxItem key={path} value={path}>
               <span className="min-w-0 flex-1 truncate">{path}</span>
               <span className="shrink-0 text-subtle-foreground">
                 {candidates.find((candidate) => candidate.path === path)?.version}

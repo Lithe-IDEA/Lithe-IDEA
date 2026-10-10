@@ -1,5 +1,5 @@
 import { afterAll, expect, spyOn, test } from "bun:test";
-import { act, useState } from "react";
+import { act, useEffect, useState } from "react";
 import type { Root } from "react-dom/client";
 import { installHappyDom } from "@/test-utils/happy-dom";
 import { LocaleProvider } from "@/i18n/locale-provider";
@@ -57,10 +57,11 @@ test("settings search excludes fields absent from the current panels", () => {
   }
 });
 
-test("hierarchical navigation filters groups, resets external requests and preserves drafts through empty search", async () => {
+test("hierarchical navigation preserves drafts through empty search, automatic results and explicit navigation until Close", async () => {
   const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
   const previousAct = environment.IS_REACT_ACT_ENVIRONMENT;
   const workspaceId = "settings-hierarchy-test";
+  const livePages = new Set<string>();
   const frame = spyOn(dialog, "default").mockImplementation(({ children, footer }) => (
     <div>
       {children}
@@ -70,6 +71,12 @@ test("hierarchical navigation filters groups, resets external requests and prese
   // Page/native operations are unrelated to navigation; the real dialog state and UI request store remain mounted.
   const panel = spyOn(panels, "SettingsPanel").mockImplementation(function DraftPage({ category }) {
     const [draft, setDraft] = useState("");
+    useEffect(() => {
+      livePages.add(category);
+      return () => {
+        livePages.delete(category);
+      };
+    }, [category]);
     return (
       <div data-probe-page={category}>
         <p>{category}</p>
@@ -102,7 +109,9 @@ test("hierarchical navigation filters groups, resets external requests and prese
     const group = (id: string) =>
       host.querySelector<HTMLButtonElement>(`button[aria-controls="settings-group-${id}"]`)!;
     const currentPage = () =>
-      host.querySelector("[data-settings-content]:not([hidden])")?.getAttribute("data-settings-content");
+      host
+        .querySelector("[data-settings-content]:not([hidden])")
+        ?.getAttribute("data-settings-content");
     const search = host.querySelector<HTMLInputElement>('input[aria-label="Search settings"]')!;
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     const searchFor = async (query: string) =>
@@ -144,7 +153,9 @@ test("hierarchical navigation filters groups, resets external requests and prese
 
     await act(async () => store.getState().openSettingsDialog("project"));
     const projectPath = () =>
-      host.querySelector<HTMLInputElement>('input[aria-label="Unsaved project path"]')!;
+      host.querySelector<HTMLInputElement>(
+        '[data-settings-content="project"] input[aria-label="Unsaved project path"]',
+      )!;
     await act(async () => {
       setValue.call(projectPath(), "C:/toolchains/unsaved-jdk");
       projectPath().dispatchEvent(new Event("input", { bubbles: true }));
@@ -154,6 +165,51 @@ test("hierarchical navigation filters groups, resets external requests and prese
     await searchFor("");
     expect(currentPage()).toBe("project");
     expect(projectPath().value).toBe("C:/toolchains/unsaved-jdk");
+
+    // A matching search used to unmount the project page, unlike an empty result.
+    await searchFor("user.email");
+    expect(currentPage()).toBe("git");
+    await searchFor("");
+    await act(async () => store.getState().openSettingsDialog("project"));
+    expect(projectPath().value).toBe("C:/toolchains/unsaved-jdk");
+    expect(host.querySelector('[data-probe-page="plugins"]')).toBeNull();
+
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>('[data-settings-category="maven"]')!.click(),
+    );
+    const mavenPath = host.querySelector<HTMLInputElement>(
+      '[data-settings-content="maven"] input[aria-label="Unsaved project path"]',
+    )!;
+    await act(async () => {
+      setValue.call(mavenPath, "C:/toolchains/unsaved-maven");
+      mavenPath.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => store.getState().openSettingsDialog("project"));
+    expect(projectPath().value).toBe("C:/toolchains/unsaved-jdk");
+    await act(async () => store.getState().openSettingsDialog("maven"));
+    expect(mavenPath.value).toBe("C:/toolchains/unsaved-maven");
+    expect(host.querySelector('[data-settings-content="maven"] input')).toBe(mavenPath);
+
+    const renderOpen = (isOpen: boolean) =>
+      act(async () =>
+        mountedRoot.render(
+          <WorkspaceStoreScopeContext.Provider value={workspaceId}>
+            <LocaleProvider language="en-US">
+              <SettingsDialog isOpen={isOpen} onClose={() => {}} />
+            </LocaleProvider>
+          </WorkspaceStoreScopeContext.Provider>,
+        ),
+      );
+    await renderOpen(false);
+    expect(host.querySelector("[data-probe-page]")).toBeNull();
+    expect(livePages.size).toBe(0);
+    await renderOpen(true);
+    expect(currentPage()).toBe("maven");
+    expect(
+      host.querySelector<HTMLInputElement>('[data-settings-content="maven"] input')!.value,
+    ).toBe("");
+    expect(host.querySelector('[data-probe-page="project"]')).toBeNull();
+    expect([...livePages]).toEqual(["maven"]);
   } finally {
     try {
       await act(async () => root?.unmount());

@@ -23,12 +23,17 @@ interface SettingsDialogProps {
   onClose: () => void;
 }
 
+// 234px sidebar + 500px content + separator, modal border and viewport gutters.
+const COMPACT_SETTINGS_QUERY = "(max-width: 768px)";
+
 // Note: 分层与即时保存边界见 .agents/notes/implemented/feature/2026-10-08-windows-settings-hierarchy.md
 const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
   const { t } = useTranslation();
   const settingsInitialTab = useUIState((state) => state.settingsInitialTab);
   const settingsTabRequest = useUIState((state) => state.settingsTabRequest);
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("general");
+  const [visitedCategories, setVisitedCategories] = useState<SettingsCategory[]>([]);
+  const [compact, setCompact] = useState(() => window.matchMedia(COMPACT_SETTINGS_QUERY).matches);
   const [query, setQuery] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["appearance"]));
   const resetToDefaults = useSettingsStore((state) => state.actions.resetToDefaults);
@@ -41,27 +46,43 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
 
   const selectCategory = (category: SettingsCategory) => {
     setActiveCategory(category);
+    setVisitedCategories((previous) =>
+      previous.includes(category) ? previous : [...previous, category],
+    );
     const group = settingsGroupForCategory(category);
     if (group) setExpandedGroups((previous) => new Set(previous).add(group.id));
   };
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      setVisitedCategories([]);
+      return;
+    }
     setQuery("");
     selectCategory(categoryFromRequestedTab(settingsInitialTab));
   }, [isOpen, settingsInitialTab, settingsTabRequest]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const media = window.matchMedia(COMPACT_SETTINGS_QUERY);
+    const update = () => setCompact(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [isOpen]);
 
   const filteredCategories = filterSettingsCategories(query, t);
   const visibleCategoryIds = filteredCategories.map(({ id }) => id).join(",");
   useEffect(() => {
     if (
+      isOpen &&
       query.trim() &&
       filteredCategories.length &&
       !filteredCategories.some(({ id }) => id === activeCategory)
     ) {
       selectCategory(filteredCategories[0].id);
     }
-  }, [query, activeCategory, visibleCategoryIds]);
+  }, [isOpen, query, activeCategory, visibleCategoryIds]);
 
   if (!isOpen) return null;
   const activeItem = settingsCategories.find(({ id }) => id === activeCategory)!;
@@ -83,7 +104,7 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
             id === activeCategory && "bg-primary/15 text-foreground hover:bg-primary/15",
           )}
         >
-          {t(item.labelKey)}
+          <span className="truncate">{t(item.labelKey)}</span>
         </button>
       </li>
     );
@@ -164,7 +185,7 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
         defaultLayout={defaultLayout}
         onLayoutChanged={onLayoutChanged}
       >
-        <ResizablePanel id="categories" defaultSize="234px" minSize="234px">
+        <ResizablePanel id="categories" defaultSize="234px" minSize={compact ? "180px" : "234px"}>
           <div className="flex h-full min-h-0 flex-col bg-background pt-3">
             <div className="mb-3 px-2">
               <Input
@@ -223,20 +244,20 @@ const SettingsDialog = ({ isOpen, onClose }: SettingsDialogProps) => {
                 {t("settings.noResults")}
               </p>
             )}
-            {/* Keep the current page's unsaved draft while the search shows its empty state. */}
-            <div
-              key={activeCategory}
-              hidden={!filteredCategories.length}
-              data-settings-content={activeCategory}
-              className={cn(
-                "@container/settings min-h-0 min-w-0 flex-1",
-                activeCategory === "plugins"
-                  ? "overflow-hidden"
-                  : "overflow-y-auto px-4 pt-4 pb-5",
-              )}
-            >
-              <SettingsPanel category={activeCategory} onClose={onClose} />
-            </div>
+            {/* Mount pages on first visit; retain drafts until the dialog closes. */}
+            {visitedCategories.map((category) => (
+              <div
+                key={category}
+                hidden={category !== activeCategory || !filteredCategories.length}
+                data-settings-content={category}
+                className={cn(
+                  "@container/settings min-h-0 min-w-0 flex-1",
+                  category === "plugins" ? "overflow-hidden" : "overflow-y-auto px-4 pt-4 pb-5",
+                )}
+              >
+                <SettingsPanel category={category} onClose={onClose} />
+              </div>
+            ))}
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>

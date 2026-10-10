@@ -1,3 +1,4 @@
+import SettingsSelect from "@/ui/settings-select";
 import { FontSelector } from "./font-selector";
 import { MIN_EDITOR_FONT_SIZE, MAX_EDITOR_FONT_SIZE } from "../lib/editor-font-size";
 import { buildFontFamilyStack } from "../lib/font-family-resolution";
@@ -5,12 +6,17 @@ import { DEFAULT_MONO_FONT_FAMILY } from "../config/typography-defaults";
 import { AiCommitSettingsPanel } from "./ai-commit-settings-panel";
 import { AISettings } from "./tabs/ai-settings";
 import { getVersion } from "@tauri-apps/api/app";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { themeRegistry } from "@/extensions/themes/theme-registry";
 import { useRegisteredThemes } from "@/extensions/themes/use-registered-themes";
 import { useUpdater } from "@/features/settings/hooks/use-updater";
 import { useSettingsStore } from "@/features/settings/stores/settings.store";
 import type { EditorTabLayoutMode } from "@/features/settings/types/settings.types";
+import {
+  getSystemThemePreference,
+  resolveEffectiveTheme,
+  subscribeSystemThemePreference,
+} from "@/features/settings/lib/theme-resolution";
 import {
   getProjectOpenPreference,
   getProjectOpenPreferencePatch,
@@ -25,7 +31,12 @@ import { useTranslation } from "@/i18n/locale-provider";
 import { Button } from "@/ui/button";
 import NumberInput from "@/ui/number-input";
 import Switch from "@/ui/switch";
+import Textarea from "@/ui/textarea";
+import { ToggleGroup } from "@/ui/toggle-group";
 import { SETTINGS_CONTROL_WIDTHS } from "./settings-section";
+import SettingsGroup from "./settings-section";
+import { SettingRow as SettingsRow } from "./settings-section";
+export { SettingsGroup, SettingsRow };
 import { LogSettingsPanel } from "./log-settings-panel";
 import { MavenSettingsPanel } from "./tabs/maven-settings-panel";
 import { GitSettings } from "./tabs/git-settings";
@@ -35,7 +46,7 @@ import { ProjectEnvironmentSettings } from "./project-environment-settings";
 
 import { RunConfigurationSettings } from "./run-configuration-settings";
 
-export type MacSettingsCategory =
+export type SettingsCategory =
   | "run"
   | "project"
   | "mcp"
@@ -43,6 +54,7 @@ export type MacSettingsCategory =
   | "general"
   | "editor"
   | "keyboard"
+  | "plugins"
   | "terminal"
   | "lsp"
   | "maven"
@@ -51,43 +63,11 @@ export type MacSettingsCategory =
   | "logs"
   | "updates";
 
-const controlClassName =
-  "h-8 rounded-md border border-input bg-background px-2.5 text-foreground outline-none focus:border-primary";
-
-export function SettingsGroup({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="overflow-clip rounded-md border border-border bg-surface/35">
-      <h3 className="border-border border-b px-3 py-2 ui-text-sm font-medium text-subtle-foreground">
-        {title}
-      </h3>
-      <div className="flex flex-col gap-3 p-3">{children}</div>
-    </section>
-  );
-}
-
-export function SettingsRow({
-  label,
-  description,
-  children,
-}: {
-  label: string;
-  description?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex min-h-8 items-center gap-4">
-      <div className="min-w-0 flex-1">
-        <div className="ui-text-sm text-foreground">{label}</div>
-        {description ? (
-          <p className="mt-1 ui-text-caption leading-relaxed text-subtle-foreground">
-            {description}
-          </p>
-        ) : null}
-      </div>
-      <div className="shrink-0">{children}</div>
-    </div>
-  );
-}
+const PluginsPanel = lazy(() =>
+  import("@/extensions/ui/components/extensions-sidebar").then(({ ExtensionsSidebar }) => ({
+    default: ExtensionsSidebar,
+  })),
+);
 
 function GeneralPanel() {
   const { t } = useTranslation();
@@ -95,6 +75,12 @@ function GeneralPanel() {
   const updateSetting = useSettingsStore((state) => state.actions.updateSetting);
   const projectPlacement = getProjectOpenPreference(settings);
   const registeredThemes = useRegisteredThemes();
+  const systemTheme = useSyncExternalStore(
+    subscribeSystemThemePreference,
+    getSystemThemePreference,
+    getSystemThemePreference,
+  );
+  const effectiveTheme = resolveEffectiveTheme(settings, systemTheme);
   const [gitPolicy, setGitPolicy] = useState("ask");
   const [directoryPatterns, setDirectoryPatterns] = useState(
     settings.hiddenDirectoryPatterns.join("\n"),
@@ -103,7 +89,7 @@ function GeneralPanel() {
 
   const appearanceMode = settings.syncSystemTheme
     ? "system"
-    : settings.theme.includes("light")
+    : themeRegistry.getTheme(effectiveTheme)?.isDark === false
       ? "light"
       : "dark";
 
@@ -117,17 +103,17 @@ function GeneralPanel() {
   );
 
   const normalizedThemeOptions = useMemo(() => {
-    if (themeOptions.some((option) => option.value === settings.theme)) {
+    if (themeOptions.some((option) => option.value === effectiveTheme)) {
       return themeOptions;
     }
 
-    const fallbackTheme = themeRegistry.getTheme(settings.theme);
+    const fallbackTheme = themeRegistry.getTheme(effectiveTheme);
     if (!fallbackTheme) {
       return themeOptions;
     }
 
     return [{ value: fallbackTheme.id, label: fallbackTheme.name }, ...themeOptions];
-  }, [themeOptions, settings.theme]);
+  }, [themeOptions, effectiveTheme]);
 
   const handleThemeChange = (themeId: string) => {
     const theme = themeRegistry.getTheme(themeId);
@@ -153,27 +139,27 @@ function GeneralPanel() {
     <div className="flex flex-col gap-4">
       <SettingsGroup title={t("settings.mac.appearance")}>
         <SettingsRow label={t("settings.mac.colorTheme")}>
-          <select
-            className={`${controlClassName} w-40`}
-            value={settings.theme}
-            onChange={(event) => handleThemeChange(event.target.value)}
-          >
-            {normalizedThemeOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <SettingsSelect
+            aria-label={t("settings.mac.colorTheme")}
+            className="w-40"
+            value={effectiveTheme}
+            onChange={(selectedValue) => handleThemeChange(selectedValue)}
+            options={normalizedThemeOptions}
+          />
         </SettingsRow>
         <SettingsRow
           label={t("settings.mac.appearanceMode")}
           description={t("settings.mac.appearanceDescription")}
         >
-          <select
-            className={`${controlClassName} w-40`}
+          <ToggleGroup
+            ariaLabel={t("settings.mac.appearanceMode")}
+            size="sm"
+            variant="segmented"
+            wrap={false}
+            className="rounded-sm border border-border bg-background"
             value={appearanceMode}
-            onChange={(event) => {
-              const value = event.target.value;
+            onValueChange={(selectedValue) => {
+              const value = selectedValue;
               if (value === "system") {
                 void updateSetting("syncSystemTheme", true);
                 return;
@@ -181,11 +167,12 @@ function GeneralPanel() {
               void updateSetting("syncSystemTheme", false);
               void updateSetting("theme", value === "light" ? "lithe-light" : "lithe-dark");
             }}
-          >
-            <option value="system">{t("settings.mac.followSystem")}</option>
-            <option value="light">{t("settings.mac.light")}</option>
-            <option value="dark">{t("settings.mac.dark")}</option>
-          </select>
+            options={[
+              { value: "system", label: t("settings.mac.followSystem") },
+              { value: "light", label: t("settings.mac.light") },
+              { value: "dark", label: t("settings.mac.dark") },
+            ]}
+          />
         </SettingsRow>
       </SettingsGroup>
 
@@ -194,16 +181,18 @@ function GeneralPanel() {
           label={t("settings.mac.language")}
           description={t("settings.mac.languageDescription")}
         >
-          <select
-            className={`${controlClassName} w-40`}
+          <SettingsSelect
+            aria-label={t("settings.mac.language")}
+            className="w-40"
             value={settings.displayLanguage}
-            onChange={(event) =>
-              void updateSetting("displayLanguage", event.target.value as "en-US" | "zh-CN")
+            onChange={(selectedValue) =>
+              void updateSetting("displayLanguage", selectedValue as "en-US" | "zh-CN")
             }
-          >
-            <option value="en-US">English</option>
-            <option value="zh-CN">简体中文</option>
-          </select>
+            options={[
+              { value: "en-US", label: "English" },
+              { value: "zh-CN", label: "简体中文" },
+            ]}
+          />
         </SettingsRow>
       </SettingsGroup>
 
@@ -212,13 +201,12 @@ function GeneralPanel() {
           label={t("settings.mac.openProjectsIn")}
           description={t("settings.mac.openProjectsDescription")}
         >
-          <select
-            className={`${controlClassName} w-40`}
+          <SettingsSelect
+            aria-label={t("settings.mac.openProjectsIn")}
+            className="w-40"
             value={projectPlacement}
-            onChange={(event) => {
-              const patch = getProjectOpenPreferencePatch(
-                event.target.value as ProjectOpenPreference,
-              );
+            onChange={(selectedValue) => {
+              const patch = getProjectOpenPreferencePatch(selectedValue as ProjectOpenPreference);
               if (patch.projectOpenDefaultDestination !== undefined) {
                 void updateSetting(
                   "projectOpenDefaultDestination",
@@ -227,12 +215,13 @@ function GeneralPanel() {
               }
               void updateSetting("askWhereToOpenProjects", patch.askWhereToOpenProjects ?? true);
             }}
-          >
-            <option value="ask">{t("settings.mac.askEveryTime")}</option>
-            <option value="this-window">{t("settings.mac.thisWindow")}</option>
-            <option value="new-window">{t("settings.mac.newWindow")}</option>
-            <option value="attach">{t("settings.mac.attach")}</option>
-          </select>
+            options={[
+              { value: "ask", label: t("settings.mac.askEveryTime") },
+              { value: "this-window", label: t("settings.mac.thisWindow") },
+              { value: "new-window", label: t("settings.mac.newWindow") },
+              { value: "attach", label: t("settings.mac.attach") },
+            ]}
+          />
         </SettingsRow>
       </SettingsGroup>
 
@@ -251,15 +240,17 @@ function GeneralPanel() {
           label={t("settings.mac.saveLocalChangesWith")}
           description={t("settings.mac.gitPolicyDescription")}
         >
-          <select
-            className={`${controlClassName} w-40`}
+          <SettingsSelect
+            aria-label={t("settings.mac.saveLocalChangesWith")}
+            className="w-40"
             value={gitPolicy}
-            onChange={(event) => setGitPolicy(event.target.value)}
-          >
-            <option value="ask">{t("settings.mac.askEveryTime")}</option>
-            <option value="shelf">{t("settings.mac.shelf")}</option>
-            <option value="stash">{t("settings.mac.gitStash")}</option>
-          </select>
+            onChange={(selectedValue) => setGitPolicy(selectedValue)}
+            options={[
+              { value: "ask", label: t("settings.mac.askEveryTime") },
+              { value: "shelf", label: t("settings.mac.shelf") },
+              { value: "stash", label: t("settings.mac.gitStash") },
+            ]}
+          />
         </SettingsRow>
       </SettingsGroup>
 
@@ -269,16 +260,16 @@ function GeneralPanel() {
         </p>
         <label className="flex flex-col gap-1.5 ui-text-sm text-foreground">
           {t("settings.mac.directories")}
-          <textarea
-            className="min-h-18 resize-y rounded-md border border-input bg-background p-2 font-mono ui-text-sm outline-none focus:border-primary"
+          <Textarea
+            className="min-h-18 font-mono"
             value={directoryPatterns}
             onChange={(event) => setDirectoryPatterns(event.target.value)}
           />
         </label>
         <label className="flex flex-col gap-1.5 ui-text-sm text-foreground">
           {t("settings.mac.filePatterns")}
-          <textarea
-            className="min-h-14 resize-y rounded-md border border-input bg-background p-2 font-mono ui-text-sm outline-none focus:border-primary"
+          <Textarea
+            className="min-h-14 font-mono"
             value={filePatterns}
             onChange={(event) => setFilePatterns(event.target.value)}
           />
@@ -347,8 +338,8 @@ function EditorPanel() {
             fontSize: settings.fontSize,
             fontVariantLigatures: settings.editorFontLigatures ? "normal" : "none",
             fontFeatureSettings: settings.editorFontLigatures
-              ? '\"liga\" 1, \"calt\" 1'
-              : '\"liga\" 0, \"calt\" 0',
+              ? '"liga" 1, "calt" 1'
+              : '"liga" 0, "calt" 0',
           }}
         >
           {"const ready = a != b && count <= 10;\n(a, b) => a === b   中文字体预览 0123456789"}
@@ -370,29 +361,32 @@ function EditorPanel() {
       </SettingsGroup>
       <SettingsGroup title={t("settings.mac.editorTabs")}>
         <SettingsRow label={t("settings.mac.layout")}>
-          <select
-            className={`${controlClassName} w-40`}
+          <SettingsSelect
+            aria-label={t("settings.mac.layout")}
+            className="w-40"
             value={settings.editorTabLayoutMode}
-            onChange={(event) =>
-              void updateSetting("editorTabLayoutMode", event.target.value as EditorTabLayoutMode)
+            onChange={(selectedValue) =>
+              void updateSetting("editorTabLayoutMode", selectedValue as EditorTabLayoutMode)
             }
-          >
-            <option value="singleLine">{t("settings.mac.singleRow")}</option>
-            <option value="multipleRows">{t("settings.mac.wrapRows")}</option>
-          </select>
+            options={[
+              { value: "singleLine", label: t("settings.mac.singleRow") },
+              { value: "multipleRows", label: t("settings.mac.wrapRows") },
+            ]}
+          />
         </SettingsRow>
       </SettingsGroup>
       <SettingsGroup title={t("settings.mac.indentation")}>
         <SettingsRow label={t("settings.mac.tabWidth")}>
-          <select
-            className={`${controlClassName} w-32`}
-            value={settings.tabSize}
-            onChange={(event) => void updateSetting("tabSize", Number(event.target.value))}
-          >
-            {[2, 4, 8].map((size) => (
-              <option key={size} value={size}>{`${size} ${t("settings.mac.spaces")}`}</option>
-            ))}
-          </select>
+          <SettingsSelect
+            aria-label={t("settings.mac.tabWidth")}
+            className="w-32"
+            value={String(settings.tabSize)}
+            onChange={(selectedValue) => void updateSetting("tabSize", Number(selectedValue))}
+            options={[2, 4, 8].map((size) => ({
+              value: String(size),
+              label: `${size} ${t("settings.mac.spaces")}`,
+            }))}
+          />
         </SettingsRow>
       </SettingsGroup>
     </div>
@@ -423,21 +417,21 @@ function TerminalPanel() {
         label={t("settings.mac.defaultShell")}
         description={t("settings.mac.defaultShellDescription")}
       >
-        <select
-          className={`${controlClassName} w-64`}
+        <SettingsSelect
+          aria-label={t("settings.mac.defaultShell")}
+          className="w-64"
           value={settings.terminalDefaultShellId}
-          onChange={(event) => void updateSetting("terminalDefaultShellId", event.target.value)}
-        >
-          {shellOptions.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.value === SYSTEM_DEFAULT_SHELL_VALUE
+          onChange={(selectedValue) => void updateSetting("terminalDefaultShellId", selectedValue)}
+          options={shellOptions.map((option) => ({
+            value: option.value,
+            label:
+              option.value === SYSTEM_DEFAULT_SHELL_VALUE
                 ? t("settings.mac.systemDefault")
                 : option.isAvailable
                   ? (option.shellName ?? option.value)
-                  : `${option.value} (${t("terminal.shellUnavailable")})`}
-            </option>
-          ))}
-        </select>
+                  : `${option.value} (${t("terminal.shellUnavailable")})`,
+          }))}
+        />
       </SettingsRow>
       <div className="flex items-center gap-3">
         <Button
@@ -581,11 +575,11 @@ function UpdatesPanel() {
   );
 }
 
-export function MacSettingsPanel({
+export function SettingsPanel({
   category,
   onClose,
 }: {
-  category: MacSettingsCategory;
+  category: SettingsCategory;
   onClose: () => void;
 }) {
   switch (category) {
@@ -603,6 +597,12 @@ export function MacSettingsPanel({
       return <EditorPanel />;
     case "keyboard":
       return <KeyboardSettings />;
+    case "plugins":
+      return (
+        <Suspense fallback={null}>
+          <PluginsPanel presentation="settings" />
+        </Suspense>
+      );
     case "terminal":
       return <TerminalPanel />;
     case "lsp":

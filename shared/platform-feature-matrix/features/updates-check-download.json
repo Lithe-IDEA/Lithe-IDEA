@@ -18,7 +18,7 @@
     "evidence": [
       "windows/tauri/src/features/layout/components/app-update-control.tsx",
       "windows/tauri/src/features/layout/components/app-update-details-dialog.tsx",
-      "windows/tauri/src/features/settings/components/macos-settings-panels.tsx",
+      "windows/tauri/src/features/settings/components/settings-panels.tsx",
       "windows/tauri/src/features/settings/hooks/use-updater.ts",
       "windows/tauri/src/features/settings/stores/update.store.test.ts",
       "windows/tauri/src/config/services.json",

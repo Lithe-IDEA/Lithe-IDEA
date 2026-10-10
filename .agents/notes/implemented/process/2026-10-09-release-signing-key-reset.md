@@ -17,7 +17,10 @@
 - 使用 Sparkle 2.10.0 的固定工具生成新的 Sparkle Ed25519 密钥，并把私钥配置为 `SPARKLE_PRIVATE_KEY`，公钥配置为 `SPARKLE_PUBLIC_KEY`。
 - 使用 Tauri signer 生成新的密码保护更新器密钥，并把私钥及密码配置为 `TAURI_SIGNING_PRIVATE_KEY` 和 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`，公钥配置为 `TAURI_UPDATER_PUBLIC_KEY`。
 - 使用 CryptoKit 生成新的官方插件包 Ed25519 密钥。私钥配置为 `LITHE_PLUGIN_PACKAGE_PRIVATE_KEY`，源码内置信任公钥改为 `lithe-official-plugins-v2`。
-- 发布账号通过仓库变量 `LITHE_RELEASE_ACTOR` 明确配置为 `xiaoyumuxi`，不再依赖组织名与执行账号必须相同。
+- 发布账号通过仓库变量 `LITHE_RELEASE_ACTOR` 明确配置，不再依赖组织名与执行账号必须相同；初次轮换时为 `xiaoyumuxi`，本次经授权的 0.6.0 重建发布使用有仓库管理权限的 `Mucheen`。
+- 稳定更新、回退下载和官方插件下载统一使用 `Lithe-IDEA/Lithe-IDEA`；Homebrew 从仓库默认分支更新，不能继续引用原仓库或不存在的 `main`。
+- 两条正式发布工作流支持 `publish=false` 的完整预检。先完成打包、客户端公钥验签和临时目录内安装启动验证，再合并准备 PR、重建标签并发布；预检不得写 GitHub Release、Homebrew 分支或 AtomGit。
+- Sparkle 使用 Node 的 Ed25519 加密实现验证 DMG 和 appcast 中的每个归档；Tauri 使用上游 minisign 验证更新器签名。插件仍由既有签名工具按内置 v2 公钥验证，不能只检查签名文件存在。
 - Developer ID 和 Authenticode 证书没有伪造配置；它们仍是独立的可选签名材料。
 
 私钥不得提交到仓库、写入 release asset、输出到日志或发送到聊天。新密钥的本机备份位于受保护目录，正式发布前必须再复制到离线密码管理器或加密备份。
@@ -40,6 +43,8 @@
 - 用 `gh secret list --repo Lithe-IDEA/Lithe-IDEA` 仅确认 Secret 名称存在，不读取 Secret 值。
 - 用 `gh variable list --repo Lithe-IDEA/Lithe-IDEA` 确认公钥变量和发布账号变量存在。
 - 运行 `./scripts/verify-agent-notes.sh`。
+- 运行 `node --test scripts/verify-release-signature.test.mjs`，确认篡改文件、错误公钥和截断签名被拒绝。
+- 发布工作流安装到独立临时目录，验证版本、公钥、启动及安装目录 SHA-256 清单不变，并有界终止自身应用进程、卸载或删除临时安装。
 - 发布前运行 `./scripts/verify-official-plugins.sh`、`./scripts/verify-macos-package.sh` 和 Windows 更新器对应测试。
 - 在真实发布前完成旧版本到新版本的安装、Sparkle 验签、Tauri 更新器验签和官方插件安装验证；普通 CI 成功不能替代这些检查。
 

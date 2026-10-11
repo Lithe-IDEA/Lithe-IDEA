@@ -16,8 +16,8 @@ extension AppModel {
             closeLanguageNavigationResults()
             return true
         }
-        if selectedSidebar == .database {
-            selectedSidebar = .project
+        if isDatabaseWorkspaceSelected {
+            closeDatabaseWorkspace(overview: editorTabOrderFeature.databaseOverviewSelected)
             return true
         }
         if branchComparison != nil {
@@ -42,6 +42,10 @@ extension AppModel {
         }
         guard let item = editorTabItems.last else { return false }
         switch item {
+        case .databaseOverview:
+            closeDatabaseWorkspace(overview: true)
+        case .database:
+            closeDatabaseTab(item)
         case .repositoryDiff:
             closeGitCommitDiff()
         case .document(let documentID):

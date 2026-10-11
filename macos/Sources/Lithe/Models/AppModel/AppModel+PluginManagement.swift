@@ -63,8 +63,9 @@ extension AppModel {
                 $0.manifest.id == .database
             } == true
         }
-        if closesDatabase, selectedSidebar == .database {
-            selectedSidebar = .project
+        if closesDatabase {
+            closeDatabaseWorkspace()
+            workbenchFeature.setVisibility(.database, isVisible: false)
             await Task.yield()
         }
 

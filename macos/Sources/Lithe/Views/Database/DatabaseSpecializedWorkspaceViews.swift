@@ -17,7 +17,7 @@ struct RedisWorkspaceView: View {
     var body: some View {
         VStack(spacing: 0) {
             workspaceHeader
-            Rectangle().fill(LitheTheme.divider).frame(height: 1)
+            LitheToolWindowHeaderDivider()
             HStack(spacing: 0) {
                 keyBrowser
                     .frame(minWidth: 250, idealWidth: 300, maxWidth: 350)
@@ -26,6 +26,7 @@ struct RedisWorkspaceView: View {
             }
         }
         .litheWorkbenchSurface(LitheTheme.editor)
+        .workbenchHoverTooltipScope()
         .task(id: feature.selectedProfileID) {
             await feature.loadRedisKeys(pattern: pattern)
         }
@@ -64,43 +65,30 @@ struct RedisWorkspaceView: View {
     }
 
     private var workspaceHeader: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "square.stack.3d.up.fill")
-                .font(LitheTheme.uiFont(size: 13, weight: .semibold))
-                .foregroundStyle(Color(red: 0.86, green: 0.22, blue: 0.20))
-                .frame(width: 28, height: 28)
-                .background(Color.red.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Redis Key Browser").font(LitheTheme.uiFont(size: 12.5, weight: .semibold))
-                Text("Incremental SCAN only — no full keyspace load")
-                    .font(LitheTheme.uiFont(size: 9.5))
-                    .foregroundStyle(LitheTheme.secondaryText)
-            }
-            Spacer()
+        LitheToolWindowHeader(title: "Redis Key Browser") {
             if let profile {
                 Text("DB \(profile.database.isEmpty ? "0" : profile.database)")
-                    .font(LitheTheme.uiFont(size: 10, weight: .medium))
+                    .font(LitheTheme.uiFont(size: 13))
                     .foregroundStyle(LitheTheme.secondaryText)
-                    .padding(.horizontal, 8).padding(.vertical, 5)
-                    .background(LitheTheme.inputBackground)
-                    .clipShape(Capsule())
             }
             Toggle("Estimate size", isOn: Binding(
                 get: { feature.redisIncludeSize },
                 set: { feature.redisIncludeSize = $0 }
             ))
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .help("Estimate key size during SCAN")
-            Button { Task { await feature.loadRedisKeys(pattern: pattern) } } label: { Image(systemName: "arrow.clockwise") }
-                .litheIconButton().help("Rescan from the beginning")
-                .disabled(feature.isLoading || profile == nil)
+            .toggleStyle(.checkbox)
+            .controlSize(.regular)
+            .font(LitheTheme.uiFont(size: 13))
+            .workbenchHoverHelp(Text("Estimate key size during SCAN"))
+            Button { Task { await feature.loadRedisKeys(pattern: pattern) } } label: {
+                LitheIDEAIcon(resourcePath: "expui/general/refresh.svg",
+                              size: LitheTheme.Metrics.toolbarIconSize, preservesOriginalColors: true)
+            }
+            .litheToolbarIconButton()
+            .workbenchHoverHelp(Text("Rescan from the beginning"))
+            .accessibilityLabel("Rescan from the beginning")
+            .disabled(feature.isLoading || profile == nil)
         }
-        .padding(.horizontal, 12)
-        .frame(height: 44)
-        .foregroundStyle(LitheTheme.primaryText)
-        .litheWorkbenchSurface(LitheTheme.toolHeader)
+        .help("Incremental SCAN only — no full keyspace load")
     }
 
     private var keyBrowser: some View {
@@ -110,35 +98,33 @@ struct RedisWorkspaceView: View {
                     .focused($patternFocused)
                     .litheSearchField(isFocused: patternFocused)
                     .onSubmit { Task { await feature.loadRedisKeys(pattern: pattern) } }
-                Button { Task { await feature.loadRedisKeys(pattern: pattern) } } label: { Image(systemName: "magnifyingglass") }
-                    .litheIconButton().help("Search keys with SCAN")
+                Button { Task { await feature.loadRedisKeys(pattern: pattern) } } label: {
+                    LitheIDEAIcon(resourcePath: "expui/general/search.svg",
+                                  size: LitheTheme.Metrics.toolbarIconSize, preservesOriginalColors: true)
+                }
+                    .litheToolbarIconButton()
+                    .workbenchHoverHelp(Text("Search keys with SCAN"))
+                    .accessibilityLabel("Search keys with SCAN")
                     .disabled(feature.isLoading || profile == nil)
             }
             .padding(10)
-            Rectangle().fill(LitheTheme.divider).frame(height: 1)
-
-            if let profile, feature.connectionStatuses[profile.id] == .failed, let error = feature.errorMessage {
-                specializedErrorBanner(message: error) {
-                    Task { await feature.loadRedisKeys(pattern: pattern) }
-                }
-            }
-
             if feature.redisKeys.isEmpty && feature.isLoading {
                 VStack(spacing: 9) {
                     ProgressView().controlSize(.small)
                     Text("Scanning keys…")
-                        .font(LitheTheme.uiFont(size: 11, weight: .medium))
+                        .font(LitheTheme.uiFont(size: 13))
                         .foregroundStyle(LitheTheme.secondaryText)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if feature.redisKeys.isEmpty {
-                specializedEmptyState(
-                    symbol: "magnifyingglass",
-                    title: feature.errorMessage == nil ? "No matching keys" : "No keys loaded",
-                    detail: feature.errorMessage == nil
+                LitheUnavailableView(
+                    feature.errorMessage == nil ? "No matching keys" : "No keys loaded",
+                    systemImage: "magnifyingglass",
+                    description: Text(feature.errorMessage == nil
                         ? "No keys matched this pattern. Try a broader pattern to search again."
-                        : "Retry the scan after fixing the connection or authentication settings."
+                        : "Retry the scan after fixing the connection or authentication settings.")
                 )
+                .foregroundStyle(LitheTheme.secondaryText)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
@@ -218,7 +204,8 @@ struct RedisWorkspaceView: View {
                         } else if detail.type == "hash" {
                             hashEditor(detail)
                         } else {
-                            specializedEmptyState(symbol: "eye", title: "Read-only in this first release", detail: "This key is a \(detail.type). String and Hash editing are available now; other Redis types remain safely inspectable from the key list.")
+                            LitheUnavailableView("Read-only in this first release", systemImage: "eye", description: Text("This key is a \(detail.type). String and Hash editing are available now; other Redis types remain safely inspectable from the key list."))
+                                .foregroundStyle(LitheTheme.secondaryText)
                                 .frame(maxWidth: .infinity, minHeight: 170)
                         }
                     }
@@ -227,7 +214,8 @@ struct RedisWorkspaceView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            specializedEmptyState(symbol: "square.stack.3d.up", title: "Select a Redis key", detail: "Key values load only after you select one, keeping large Redis instances responsive.")
+            LitheUnavailableView("Select a Redis key", systemImage: "square.stack.3d.up", description: Text("Key values load only after you select one, keeping large Redis instances responsive."))
+                .foregroundStyle(LitheTheme.secondaryText)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }

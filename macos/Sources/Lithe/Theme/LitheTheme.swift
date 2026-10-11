@@ -441,6 +441,13 @@ enum LitheTheme {
                                     : Color(red: 233/255, green: 234/255, blue: 238/255)
     }
 
+    /// ActionToolbarImpl.MySeparator → ToolBar.separatorColor → Islands toolbar-border.
+    enum ActionToolbar {
+        static var separator: Color {
+            controlColor(light: 0x000000, dark: 0xFFFFFF, lightAlpha: 32/255, darkAlpha: 33/255)
+        }
+    }
+
     /// IDEA Islands editor scheme and inherited Darcula/Default diff attributes.
     /// Source: platform/platform-resources/src/themes/islands/IslandSchemeDark.xml
     /// and DefaultColorSchemesManager.xml at c7f91397daa3a961b4e78bc634fe467a0a7d9ade.
@@ -483,6 +490,26 @@ enum LitheTheme {
         static var selection: Color { controlColor(light: 0xA6D2FF, dark: 0x214283) }
         // IDEA TextDiffTypeFactory mixes 60% editor background into an ignored line.
         static var modifiedLine: Color { controlColor(light: 0xE6EFFA, dark: 0x25323E) }
+    }
+
+    // Community grid/impl: GridColorSchemeUtil reads editor colors, not Table UI tokens.
+    enum DatabaseGrid {
+        static var background: Color { activeTheme == .lithe ? controlColor(light: 0xFFFFFF, dark: 0x191A1C) : editor }
+        // SelectionColorLayer -> DataGridUIUtil.softHighlightOf: +/- 0x10 per RGB channel.
+        static var headerBackground: Color { activeTheme == .lithe ? controlColor(light: 0xEFEFEF, dark: 0x292A2C) : raised }
+        // SelectionColorLayer.getRowHeaderBackground -> GRID_CURRENT_ROW / CARET_ROW_COLOR.
+        static var currentRowBackground: Color { activeTheme == .lithe ? controlColor(light: 0xFCFAED, dark: 0x1F2024) : subtleSelection }
+        static var border: Color { activeTheme == .lithe ? controlColor(light: 0xE6E6E6, dark: 0x323438) : guide }
+        static var text: Color { activeTheme == .lithe ? controlColor(light: 0x000000, dark: 0xBCBEC4) : primaryText }
+        // GRID_NULL_VALUE inherits DEFAULT_LINE_COMMENT in the editor scheme.
+        static var nullText: Color { activeTheme == .lithe ? controlColor(light: 0x8C8C8C, dark: 0x7A7E85) : secondaryText }
+        static var selected: Color { activeTheme == .lithe ? controlColor(light: 0xA6D2FF, dark: 0x214283) : selection }
+        static var inactiveSelected: Color { activeTheme == .lithe ? controlColor(light: 0xB5B7BD, dark: 0x4C4F56) : subtleSelection }
+        // DarculaUIUtil.paintCellEditorBorder -> Islands Component.focusColor.
+        static var editingBorder: Color { activeTheme == .lithe ? controlColor(light: 0x3871E1, dark: 0x3871E1) : inputFocusBorder }
+        static let editingBorderWidth: CGFloat = 2
+        // TableResultView: font line height + 1pt row margin + 4pt cell insets.
+        static var rowHeight: CGFloat { ceil(NSLayoutManager().defaultLineHeight(for: editorFont(size: 13)) * editorLineHeightMultiple) + 5 }
     }
 
     // MARK: - 输入控件
@@ -791,10 +818,9 @@ enum LitheTheme {
 }
 
 extension View {
-    func litheToolbarIconButton(isEnabled: Bool = true) -> some View {
-        buttonStyle(LitheIconButtonStyle(size: LitheTheme.Metrics.toolbarIconButtonSize))
+    func litheToolbarIconButton(isEnabled: Bool = true, isIconOnly: Bool = true) -> some View {
+        buttonStyle(LitheIconButtonStyle(size: LitheTheme.Metrics.toolbarIconButtonSize, isIconOnly: isIconOnly))
             .disabled(!isEnabled)
-            .opacity(isEnabled ? 1 : 0.45)
     }
 
     func litheIconButton() -> some View {
@@ -890,6 +916,7 @@ extension View {
 
 struct LitheIconButtonStyle: ButtonStyle {
     var size: CGFloat = 28
+    var isIconOnly = true
     var cornerRadius: CGFloat = LitheTheme.Metrics.cornerRadius
     var isSelected = false
     var hoverBackground: Color = LitheTheme.hoverBackground
@@ -900,7 +927,8 @@ struct LitheIconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(LitheTheme.toolWindowText)
-            .frame(width: size, height: size)
+            .opacity(isEnabled ? 1 : 0.45)
+            .frame(width: isIconOnly ? size : nil, height: size)
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(
@@ -1136,10 +1164,11 @@ private struct LitheTextFieldEditingObserver: NSViewRepresentable {
     }
 }
 
-private final class LitheTextFieldEditingView: NSView {
+final class LitheTextFieldEditingView: NSView {
     var onChange: ((Bool) -> Void)?
     private weak var editor: NSTextView?
     private var hasEditingText = false
+    private var outsideClickMonitor: Any?
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
@@ -1150,6 +1179,20 @@ private final class LitheTextFieldEditingView: NSView {
         let center = NotificationCenter.default
         center.addObserver(self, selector: #selector(editingChanged), name: NSTextStorage.didProcessEditingNotification, object: nil)
         center.addObserver(self, selector: #selector(editingEnded), name: NSText.didEndEditingNotification, object: nil)
+        outsideClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            self?.releaseFocusForOutsideClick(event)
+            return event
+        }
+    }
+
+    func releaseFocusForOutsideClick(_ event: NSEvent) {
+        guard let window, event.window === window,
+              let editor = window.firstResponder as? NSTextView, editor.isFieldEditor,
+              editor.convert(editor.bounds, to: self).contains(NSPoint(x: bounds.midX, y: bounds.midY)) else { return }
+        // Only the observer belonging to the active input may release its editor.
+        if !editor.bounds.contains(editor.convert(event.locationInWindow, from: nil)) {
+            window.makeFirstResponder(nil)
+        }
     }
 
     @objc private func editingChanged(_ notification: Notification) {
@@ -1183,12 +1226,17 @@ private final class LitheTextFieldEditingView: NSView {
     }
 
     func stopObserving() {
+        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
+        outsideClickMonitor = nil
         NotificationCenter.default.removeObserver(self)
         editor = nil
         reportEditingText()
     }
 
-    deinit { NotificationCenter.default.removeObserver(self) }
+    deinit {
+        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
+        NotificationCenter.default.removeObserver(self)
+    }
 }
 
 /// Shared search chrome follows IDEA SearchFieldWithExtension + DarculaSearchFieldWithExtensionBorder:
@@ -1272,5 +1320,16 @@ extension View {
                     .stroke(LitheTheme.panelBorder, lineWidth: 1)
             }
             .shadow(color: LitheTheme.popupShadow, radius: 30, y: 14)
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func litheFocusEffectHidden() -> some View {
+        if #available(macOS 14.0, *) {
+            focusEffectDisabled()
+        } else {
+            self
+        }
     }
 }

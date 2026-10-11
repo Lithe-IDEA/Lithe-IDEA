@@ -2,24 +2,29 @@ import AppKit
 import SwiftUI
 import LitheDatabaseModule
 
+/// Observe the feature directly so changing sections updates an already open tab.
+struct DatabaseWorkspaceTabTitle: View {
+    @ObservedObject var feature: DatabaseFeatureModel
+
+    var profileID: UUID?
+
+    var title: String {
+        guard let profileID, let profile = feature.profiles.first(where: { $0.id == profileID }) else {
+            return "SQL History"
+        }
+        return profile.database.isEmpty ? profile.name : profile.database
+    }
+
+    var body: some View { Text(verbatim: title) }
+}
+
 struct DatabaseWorkspaceView: View {
     @EnvironmentObject private var feature: DatabaseFeatureModel
 
     var body: some View {
         Group {
-            if feature.selectedProfile == nil {
-                DatabaseDashboardView(
-                    onOpenConnection: { profile in
-                        Task { await feature.select(profile) }
-                    },
-                    onNewQuery: { profile in
-                        Task {
-                            await feature.select(profile)
-                            guard feature.selectedProfileID == profile.id else { return }
-                            feature.workspaceSection = .sql
-                        }
-                    }
-                )
+            if feature.selectedProfile == nil || (feature.workspaceSection == .history && feature.selectedProfile?.kind.isSQLDatabase != true) {
+                DatabaseHistoryView()
             } else if feature.selectedProfile?.kind == .redis {
                 RedisWorkspaceView()
             } else if feature.selectedProfile?.kind == .nacos {
@@ -31,53 +36,10 @@ struct DatabaseWorkspaceView: View {
             }
         }
         .litheWorkbenchSurface(LitheTheme.editor)
+        .id(feature.selectedProfileID)
     }
 
-    private var sqlWorkspace: some View {
-        VStack(spacing: 0) {
-            if !feature.openTableTabs.isEmpty {
-                DatabaseOpenTableTabsView()
-            }
-
-            workspaceSectionNavigation
-
-            Rectangle().fill(LitheTheme.divider).frame(height: 1)
-
-            switch feature.workspaceSection {
-            case .data:
-                DatabaseTableView()
-            case .sql:
-                DatabaseSQLWorkspaceView()
-            case .structure:
-                DatabaseStructureView()
-            case .history:
-                DatabaseHistoryView()
-            }
-        }
-    }
-
-    private var workspaceSectionNavigation: some View {
-        HStack {
-            Picker(
-                "Database workspace",
-                selection: Binding(
-                    get: { feature.workspaceSection },
-                    set: { feature.workspaceSection = $0 }
-                )
-            ) {
-                ForEach(DatabaseWorkspaceSection.allCases) { section in
-                    Label(section.titleKey, systemImage: section.symbol).tag(section)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .frame(width: 276, height: 28)
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 42)
-        .litheWorkbenchSurface(LitheTheme.toolHeader)
-    }
+    private var sqlWorkspace: some View { DatabaseTableView() }
 
     private var mongoWorkspace: some View {
         VStack(spacing: 0) {
@@ -105,283 +67,6 @@ struct DatabaseWorkspaceView: View {
     }
 }
 
-private struct DatabaseDashboardView: View {
-    @EnvironmentObject private var model: AppModel
-    @EnvironmentObject private var feature: DatabaseFeatureModel
-    @State private var showsConnectionEditor = false
-    let onOpenConnection: (DatabaseProfile) -> Void
-    let onNewQuery: (DatabaseProfile) -> Void
-
-    private var profiles: [DatabaseProfile] { feature.profiles }
-    private var sqlProfiles: [DatabaseProfile] { profiles.filter { $0.kind.isSQLDatabase } }
-    private var databaseTypeCount: Int { Set(profiles.map(\.kind)).count }
-    private var connectedCount: Int { feature.connectedProfileCount }
-    private let dashboardColumns = [
-        GridItem(.flexible(), spacing: 1),
-        GridItem(.flexible(), spacing: 1)
-    ]
-
-    var body: some View {
-        GeometryReader { geometry in
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(spacing: 12) {
-                            metricCard(title: "Connections", value: profiles.count, symbol: "cylinder.split.1x2")
-                            metricCard(title: "Connected", value: connectedCount, symbol: "checkmark.shield")
-                            metricCard(title: "Database types", value: databaseTypeCount, symbol: "sparkles")
-                        }
-
-                        HStack(alignment: .top, spacing: 12) {
-                            dashboardSection(title: "Quick Start", symbol: "bolt") {
-                                quickStartContent
-                            }
-
-                            dashboardSection(title: "Common Actions", symbol: "wand.and.stars") {
-                                LazyVGrid(columns: dashboardColumns, spacing: 1) {
-                                    dashboardAction("New Connection", symbol: "plus") { showsConnectionEditor = true }
-                                    dashboardAction("New Query", symbol: "doc.badge.plus", isEnabled: !sqlProfiles.isEmpty) {
-                                        if let first = sqlProfiles.first { onNewQuery(first) }
-                                    }
-                                    dashboardAction("Browse Database", symbol: "tablecells", isEnabled: !profiles.isEmpty) {
-                                        if let first = profiles.first { onOpenConnection(first) }
-                                    }
-                                    dashboardAction("History", symbol: "clock.arrow.circlepath") {
-                                        withAnimation { proxy.scrollTo("recent-sql", anchor: .top) }
-                                    }
-                                }
-                                .background(LitheTheme.divider)
-                            }
-                            .frame(width: 270)
-                        }
-
-                        dashboardSection(
-                            title: "Recent SQL",
-                            symbol: "clock.arrow.circlepath",
-                            minHeight: max(160, min(320, geometry.size.height - 288))
-                        ) {
-                            if feature.sqlHistory.isEmpty {
-                                dashboardEmpty("No SQL history yet.")
-                            } else {
-                                ForEach(Array(feature.sqlHistory.prefix(8))) { entry in
-                                    Button { openHistoryEntry(entry) } label: {
-                                        HStack(spacing: 10) {
-                                            Image(systemName: "terminal")
-                                                .foregroundStyle(LitheTheme.accent)
-                                            Text(entry.sql.replacingOccurrences(of: "\n", with: " "))
-                                                .font(LitheTheme.uiFont(size: 10.5, design: .monospaced))
-                                                .lineLimit(1)
-                                            Spacer()
-                                            Text(entry.executedAt, style: .relative)
-                                                .font(LitheTheme.uiFont(size: 9.5))
-                                                .foregroundStyle(LitheTheme.tertiaryText)
-                                        }
-                                        .padding(.horizontal, 12)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .frame(height: 36)
-                                    }
-                                    .buttonStyle(.litheNoPress)
-                                    .disabled(profiles.first(where: { $0.id == entry.profileID })?.kind.isSQLDatabase != true)
-                                    .litheRowHover(cornerRadius: 0)
-                                }
-                            }
-                        }
-                        .id("recent-sql")
-                    }
-                    .padding(16)
-                }
-            }
-        }
-        .litheWorkbenchSurface(LitheTheme.editor)
-        .sheet(isPresented: $showsConnectionEditor) {
-            DatabaseConnectionEditor(isPresented: $showsConnectionEditor)
-                .environment(\.locale, model.settings.language.locale)
-                .id(model.settings.language)
-        }
-    }
-
-    @ViewBuilder
-    private var quickStartContent: some View {
-        if profiles.isEmpty {
-            VStack(spacing: 8) {
-                HStack(spacing: 7) {
-                    Image(systemName: "cylinder.split.1x2")
-                        .foregroundStyle(LitheTheme.tertiaryText)
-                    Text("No saved connections yet.")
-                        .font(LitheTheme.uiFont(size: 10.5))
-                        .foregroundStyle(LitheTheme.tertiaryText)
-                }
-                Button { showsConnectionEditor = true } label: {
-                    Label("New Connection", systemImage: "plus")
-                        .font(LitheTheme.uiFont(size: 10.5, weight: .medium))
-                        .padding(.horizontal, 11)
-                        .frame(height: 28)
-                        .background(LitheTheme.inputBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: LitheTheme.Metrics.controlCornerRadius))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: LitheTheme.Metrics.controlCornerRadius)
-                                .stroke(LitheTheme.panelBorder, lineWidth: 1)
-                        }
-                }
-                .buttonStyle(.litheNoPress)
-                .lithePointer()
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 97)
-        } else {
-            let quickProfiles = profiles
-            ForEach(quickProfiles) { profile in
-                quickStartRow(profile)
-                if profile.id != quickProfiles.last?.id || quickProfiles.count == 1 {
-                    Rectangle().fill(LitheTheme.divider).frame(height: 1)
-                }
-            }
-            if quickProfiles.count == 1 {
-                quickStartAddConnectionRow
-            }
-        }
-    }
-
-    private var quickStartAddConnectionRow: some View {
-        Button { showsConnectionEditor = true } label: {
-            Label("New Connection", systemImage: "plus")
-                .font(LitheTheme.uiFont(size: 10.5, weight: .medium))
-                .foregroundStyle(LitheTheme.secondaryText)
-                .padding(.horizontal, 13)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: 48)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.litheNoPress)
-        .lithePointer()
-        .litheRowHover(cornerRadius: 0)
-    }
-
-    private func quickStartRow(_ profile: DatabaseProfile) -> some View {
-        HStack(spacing: 0) {
-            Button { onOpenConnection(profile) } label: {
-                HStack(spacing: 10) {
-                    DatabaseBrandIcon(kind: profile.kind, size: 18)
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(profile.colorHex.isEmpty ? LitheTheme.accent : Color(hex: profile.colorHex))
-                        .frame(width: 3, height: 28)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(profile.name)
-                            .font(LitheTheme.uiFont(size: 11.5, weight: .semibold))
-                        Text(connectionSubtitle(profile))
-                            .font(LitheTheme.uiFont(size: 9.5))
-                            .foregroundStyle(LitheTheme.tertiaryText)
-                    }
-                    Spacer()
-                }
-                .padding(.leading, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: 48)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.litheNoPress)
-
-            if profile.kind.isSQLDatabase {
-                Button { onNewQuery(profile) } label: {
-                    Image(systemName: "doc.badge.plus")
-                        .font(LitheTheme.uiFont(size: 12, weight: .medium))
-                        .foregroundStyle(LitheTheme.secondaryText)
-                        .frame(width: 40, height: 40)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.litheNoPress)
-                .lithePointer()
-                .help("New Query")
-                .accessibilityLabel("New Query")
-                .padding(.trailing, 6)
-            }
-        }
-        .lithePointer()
-        .litheRowHover(cornerRadius: 0)
-    }
-
-    private func openHistoryEntry(_ entry: DatabaseSQLHistoryEntry) {
-        guard let profile = profiles.first(where: { $0.id == entry.profileID }), profile.kind.isSQLDatabase else { return }
-        Task {
-            await feature.select(profile)
-            guard feature.selectedProfileID == profile.id else { return }
-            feature.workspaceSection = .sql
-            feature.restoreSQLHistory(entry)
-        }
-    }
-
-    private func metricCard(title: LocalizedStringKey, value: Int, symbol: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(title, systemImage: symbol)
-                .font(LitheTheme.uiFont(size: 10.5, weight: .medium))
-                .foregroundStyle(LitheTheme.secondaryText)
-            Text("\(value)")
-                .font(LitheTheme.uiFont(size: 25, weight: .semibold, design: .rounded))
-                .foregroundStyle(LitheTheme.primaryText)
-        }
-        .padding(15)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(LitheTheme.raised)
-        .clipShape(RoundedRectangle(cornerRadius: 9))
-        .overlay { RoundedRectangle(cornerRadius: 9).stroke(LitheTheme.panelBorder, lineWidth: 1) }
-    }
-
-    private func dashboardSection<Content: View>(
-        title: LocalizedStringKey,
-        symbol: String,
-        minHeight: CGFloat? = nil,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Label(title, systemImage: symbol)
-                .font(LitheTheme.uiFont(size: 11.5, weight: .semibold))
-                .padding(.horizontal, 13)
-                .frame(height: 40)
-            Rectangle().fill(LitheTheme.divider).frame(height: 1)
-            content()
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .topLeading)
-        .background(LitheTheme.raised)
-        .clipShape(RoundedRectangle(cornerRadius: 9))
-        .overlay { RoundedRectangle(cornerRadius: 9).stroke(LitheTheme.panelBorder, lineWidth: 1) }
-    }
-
-    private func dashboardAction(
-        _ title: LocalizedStringKey,
-        symbol: String,
-        isEnabled: Bool = true,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: symbol)
-                .font(LitheTheme.uiFont(size: 11))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 13)
-                .frame(height: 48)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.litheNoPress)
-        .disabled(!isEnabled)
-        .opacity(isEnabled ? 1 : 0.42)
-        .background(LitheTheme.raised)
-        .lithePointer()
-        .litheRowHover(cornerRadius: 0)
-    }
-
-    private func dashboardEmpty(_ message: LocalizedStringKey) -> some View {
-        Text(message)
-            .font(LitheTheme.uiFont(size: 10.5))
-            .foregroundStyle(LitheTheme.tertiaryText)
-            .padding(16)
-    }
-
-    private func connectionSubtitle(_ profile: DatabaseProfile) -> String {
-        if profile.kind == .sqlite { return "SQLite · \(URL(fileURLWithPath: profile.path).lastPathComponent)" }
-        return "\(profile.kind.displayName) · \(profile.host):\(profile.port)"
-    }
-}
-
 extension DatabaseWorkspaceSection {
     var titleKey: LocalizedStringKey {
         switch self {
@@ -391,67 +76,73 @@ extension DatabaseWorkspaceSection {
         case .history: "History"
         }
     }
-    var symbol: String {
+    var iconPath: String {
         switch self {
-        case .data: "tablecells"
-        case .sql: "terminal"
-        case .structure: "list.bullet.rectangle"
-        case .history: "clock.arrow.circlepath"
+        case .data: "database/expui/table.svg"
+        case .sql: "expui/fileTypes/shell.svg"
+        case .structure: "expui/toolwindows/structure.svg"
+        case .history: "expui/general/history.svg"
         }
     }
 }
 
-private struct DatabaseHistoryView: View {
+struct DatabaseHistoryView: View {
     @EnvironmentObject private var feature: DatabaseFeatureModel
 
     private var entries: [DatabaseSQLHistoryEntry] {
-        guard let profileID = feature.selectedProfileID else { return [] }
+        guard let profileID = feature.selectedProfileID else { return feature.sqlHistory }
         return feature.sqlHistory.filter { $0.profileID == profileID }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "clock.arrow.circlepath")
-                    .foregroundStyle(LitheTheme.accent)
-                Text("SQL History").font(LitheTheme.uiFont(size: 12.5, weight: .semibold))
-                Spacer()
+            LitheToolWindowHeader(title: "SQL History") {
                 Text("\(entries.count) statements")
-                    .font(LitheTheme.uiFont(size: 10.5))
+                    .font(LitheTheme.uiFont(size: 12))
                     .foregroundStyle(LitheTheme.secondaryText)
             }
-            .padding(.horizontal, 14)
-            .frame(height: 42)
-            .litheWorkbenchSurface(LitheTheme.toolHeader)
-            Rectangle().fill(LitheTheme.divider).frame(height: 1)
-
+            LitheToolWindowHeaderDivider()
             if entries.isEmpty {
                 LitheUnavailableView("No query history", systemImage: "clock.arrow.circlepath")
+                    .foregroundStyle(LitheTheme.secondaryText)
             } else {
-                List(entries) { entry in
-                    Button {
-                        feature.restoreSQLHistory(entry)
-                        feature.workspaceSection = .sql
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "terminal").foregroundStyle(LitheTheme.accent)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(entry.sql.replacingOccurrences(of: "\n", with: " "))
-                                    .font(LitheTheme.uiFont(size: 11.5, design: .monospaced))
-                                    .lineLimit(2)
-                                Text(entry.executedAt, format: .dateTime.year().month().day().hour().minute().second())
-                                    .font(LitheTheme.uiFont(size: 9.5))
-                                    .foregroundStyle(LitheTheme.tertiaryText)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(entries) { entry in
+                            Button {
+                                Task {
+                                    guard let profile = feature.profiles.first(where: { $0.id == entry.profileID }) else { return }
+                                    if feature.selectedProfileID != profile.id { await feature.select(profile) }
+                                    guard feature.selectedProfileID == profile.id else { return }
+                                    feature.restoreSQLHistory(entry)
+                                    feature.workspaceSection = .sql
+                                }
+                            } label: {
+                                HStack(spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(entry.sql.replacingOccurrences(of: "\n", with: " "))
+                                            .font(LitheTheme.codeFont)
+                                            .foregroundStyle(LitheTheme.primaryText)
+                                            .lineLimit(2)
+                                        Text(entry.executedAt, format: .dateTime.year().month().day().hour().minute().second())
+                                            .font(LitheTheme.uiFont(size: 12))
+                                            .foregroundStyle(LitheTheme.secondaryText)
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 6)
+                                .contentShape(Rectangle())
                             }
-                            Spacer()
-                            Image(systemName: "arrow.up.right.square")
-                                .foregroundStyle(LitheTheme.secondaryText)
+                            .buttonStyle(.litheNoPress)
+                            .litheRowHover()
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
                         }
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.litheNoPress)
+                    .padding(12)
                 }
-                .listStyle(.inset)
+                .litheScrollViewChrome()
             }
         }
     }
@@ -492,18 +183,20 @@ struct DatabaseSQLWorkspaceView: View {
     @State private var pendingTabID: UUID?
     @State private var showsRiskConfirmation = false
     @State private var sqlSelection = ""
+    @State private var queryIsActive = false
 
     var body: some View {
         VStack(spacing: 0) {
             queryTabs
-            Rectangle().fill(LitheTheme.divider).frame(height: 1)
+            LitheToolWindowHeaderDivider()
             commandBar
-            Rectangle().fill(LitheTheme.divider).frame(height: 1)
             editor
             Rectangle().fill(LitheTheme.divider).frame(height: 1)
             results
         }
         .litheWorkbenchSurface(LitheTheme.editor)
+        .background(LitheToolWindowActivityTracker(isActive: $queryIsActive))
+        .workbenchHoverTooltipScope()
         .alert("Confirm database change", isPresented: $showsRiskConfirmation, presenting: pendingRisk) { analysis in
             Button("Cancel", role: .cancel) {
                 pendingRisk = nil
@@ -525,58 +218,47 @@ struct DatabaseSQLWorkspaceView: View {
     }
 
     private var queryTabs: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
+                HStack(spacing: 8) {
                     ForEach(feature.sqlTabs) { tab in
                         HStack(spacing: 2) {
                             Button { feature.selectedSQLTabID = tab.id } label: {
                                 HStack(spacing: 6) {
-                                    Image(systemName: tab.isRunning ? "arrow.triangle.2.circlepath" : "terminal")
-                                        .font(LitheTheme.uiFont(size: 10))
+                                    LitheIDEAIcon(resourcePath: tab.isRunning ? "expui/general/refresh.svg" : "expui/fileTypes/shell.svg", size: LitheTheme.Metrics.toolbarIconSize, preservesOriginalColors: true)
                                     DatabaseLocalization.queryTabTitle(tab.title).lineLimit(1)
                                 }
-                                .font(LitheTheme.uiFont(size: 11.5))
+                                .font(LitheTheme.uiFont(size: 13))
                                 .foregroundStyle(feature.selectedSQLTabID == tab.id ? LitheTheme.primaryText : LitheTheme.secondaryText)
-                                .padding(.leading, 10)
-                                .frame(height: 31)
+                                .padding(.leading, 8)
                             }
                             .buttonStyle(.litheNoPress)
-
-                            Button { feature.closeSQLTab(tab.id) } label: {
-                                Image(systemName: "xmark")
-                                    .font(LitheTheme.uiFont(size: 8, weight: .semibold))
-                            }
-                            .litheIconButton()
-                            .foregroundStyle(LitheTheme.secondaryText)
-                            .padding(.trailing, 5)
-                            .help("Close query tab")
+                            LitheToolWindowTabCloseButton { feature.closeSQLTab(tab.id) }
+                                .accessibilityLabel("Close query tab")
                         }
-                        .background(feature.selectedSQLTabID == tab.id ? LitheTheme.activeTabBackground : LitheTheme.inactiveTabBackground)
-                        .overlay(alignment: .bottom) {
-                            if feature.selectedSQLTabID == tab.id {
-                                Rectangle().fill(LitheTheme.accent).frame(height: 2)
-                            }
-                        }
+                        .modifier(LitheToolWindowTabStyle(isSelected: feature.selectedSQLTabID == tab.id, isActive: queryIsActive))
                     }
                 }
             }
-            Button { feature.addSQLTab() } label: { Image(systemName: "plus") }
-                .litheIconButton()
-                .help("New query tab")
-                .padding(.horizontal, 5)
+            Button { feature.addSQLTab() } label: {
+                LitheIDEAIcon(resourcePath: "expui/general/add.svg", size: LitheTheme.Metrics.toolbarIconSize, preservesOriginalColors: true)
+            }
+            .litheToolbarIconButton()
+            .workbenchHoverHelp(Text("New query tab"))
+            .accessibilityLabel("New query tab")
         }
-        .frame(height: 32)
-        .litheWorkbenchSurface(LitheTheme.sidebar)
+        .padding(.horizontal, 8)
+        .frame(height: LitheTheme.Metrics.toolbarHeight)
+        .litheWorkbenchSurface(LitheTheme.editor)
     }
 
     private var commandBar: some View {
         HStack(spacing: 5) {
             Button(action: runSelectedQuery) {
-                Label("Run", systemImage: "play.fill")
+                LitheIDEAIcon(resourcePath: "expui/run/run.svg", size: LitheTheme.Metrics.toolbarIconSize, preservesOriginalColors: true)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .litheToolbarIconButton()
+            .accessibilityLabel("Run")
             .disabled(feature.selectedSQLTab?.isRunning == true || feature.selectedProfile == nil)
             .help(hasSQLSelection ? "Run selected SQL (Command-Return)" : "Run all SQL (Command-Return)")
 
@@ -585,20 +267,20 @@ struct DatabaseSQLWorkspaceView: View {
                 LitheContextMenuItem.action("Run Selection", systemImage: "text.cursor") { runSelectionQuery() }
                     .disabled(!hasSQLSelection)
             } label: {
-                Image(systemName: "chevron.down")
-                    .font(LitheTheme.uiFont(size: 9, weight: .semibold))
+                LitheIDEAIcon(resourcePath: "expui/general/chevronDown.svg", size: LitheTheme.Metrics.toolbarIconSize, preservesOriginalColors: true)
             }
-            .buttonStyle(.litheNoPress)
-            .frame(width: 18)
+            .litheToolbarIconButton()
             .disabled(feature.selectedSQLTab?.isRunning == true || feature.selectedProfile == nil)
-            .help("Choose SQL execution scope")
+            .workbenchHoverHelp(Text("Choose SQL execution scope"))
+            .accessibilityLabel("Choose SQL execution scope")
 
             Button { if let id = feature.selectedSQLTabID { feature.formatSQL(in: id) } } label: {
-                Image(systemName: "text.alignleft")
+                LitheIDEAIcon(resourcePath: "expui/actions/reformatCode.svg", size: LitheTheme.Metrics.toolbarIconSize, preservesOriginalColors: true)
             }
-            .litheIconButton()
+            .litheToolbarIconButton()
             .disabled(feature.selectedSQLTab?.sql.isEmpty != false)
-            .help("Format SQL")
+            .workbenchHoverHelp(Text("Format SQL"))
+            .accessibilityLabel("Format SQL")
 
             LitheMenu {
                 let history = historyForSelectedProfile
@@ -612,30 +294,30 @@ struct DatabaseSQLWorkspaceView: View {
                     }
                 }
             } label: {
-                Image(systemName: "clock.arrow.circlepath")
+                LitheIDEAIcon(resourcePath: "expui/general/history.svg", size: LitheTheme.Metrics.toolbarIconSize, preservesOriginalColors: true)
             }
-            .buttonStyle(.litheNoPress)
-            .frame(width: 28)
-            .help("Query history")
+            .litheToolbarIconButton()
+            .workbenchHoverHelp(Text("Query history"))
+            .accessibilityLabel("Query history")
 
             if let execution = feature.selectedSQLTab?.execution {
                 executionLabel(execution)
-                    .font(LitheTheme.uiFont(size: 10.5, design: .monospaced))
+                    .font(LitheTheme.uiFont(size: 12, design: .monospaced))
                     .foregroundStyle(LitheTheme.secondaryText)
             }
             Spacer()
             if let profile = feature.selectedProfile {
                 Text(profile.database.isEmpty ? (profile.path.isEmpty ? profile.name : profile.path) : profile.database)
-                    .font(LitheTheme.uiFont(size: 11))
+                    .font(LitheTheme.uiFont(size: 12))
                     .foregroundStyle(LitheTheme.secondaryText)
             } else {
                 Text("No connection")
-                    .font(LitheTheme.uiFont(size: 11))
+                    .font(LitheTheme.uiFont(size: 12))
                     .foregroundStyle(LitheTheme.warning)
             }
         }
-        .padding(.horizontal, 10)
-        .frame(height: 37)
+        .padding(.horizontal, 8)
+        .frame(height: LitheTheme.Metrics.toolbarHeight)
         .litheWorkbenchSurface(LitheTheme.toolHeader)
     }
 
@@ -697,7 +379,7 @@ struct DatabaseSQLWorkspaceView: View {
     }
 
     private var historyForSelectedProfile: [DatabaseSQLHistoryEntry] {
-        guard let profileID = feature.selectedProfileID else { return [] }
+        guard let profileID = feature.selectedProfileID else { return feature.sqlHistory }
         return feature.sqlHistory.filter { $0.profileID == profileID }
     }
 
@@ -762,17 +444,17 @@ private struct DatabaseQueryResultGrid: View {
                         ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
                             HStack(spacing: 0) {
                                 Text("\(index + 1)")
-                                    .font(LitheTheme.uiFont(size: 10.5, design: .monospaced))
+                                    .font(LitheTheme.codeFont)
                                     .foregroundStyle(LitheTheme.secondaryText)
-                                    .frame(width: 44, height: 27)
+                                    .frame(width: 44, height: LitheTheme.Metrics.rowHeight)
                                     .background(LitheTheme.toolHeader)
                                 ForEach(columns, id: \.self) { column in
                                     Text(display(row[column]))
-                                        .font(LitheTheme.uiFont(size: 11.5, design: .monospaced))
+                                        .font(LitheTheme.codeFont)
                                         .lineLimit(1)
                                         .truncationMode(.tail)
                                         .padding(.horizontal, 7)
-                                        .frame(width: 180, height: 27, alignment: .leading)
+                                        .frame(width: 180, height: LitheTheme.Metrics.rowHeight, alignment: .leading)
                                         .overlay(alignment: .trailing) { Rectangle().fill(LitheTheme.divider).frame(width: 1) }
                                 }
                             }
@@ -780,22 +462,23 @@ private struct DatabaseQueryResultGrid: View {
                         }
                     } header: {
                         HStack(spacing: 0) {
-                            Text("#").frame(width: 44, height: 29)
+                            Text("#").frame(width: 44, height: LitheTheme.Metrics.toolWindowHeaderHeight)
                             ForEach(columns, id: \.self) { column in
                                 Text(column)
-                                    .font(LitheTheme.uiFont(size: 11.5, weight: .semibold))
+                                    .font(LitheTheme.uiFont(size: 13))
                                     .lineLimit(1)
                                     .padding(.horizontal, 7)
-                                    .frame(width: 180, height: 29, alignment: .leading)
+                                    .frame(width: 180, height: LitheTheme.Metrics.toolWindowHeaderHeight, alignment: .leading)
                                     .overlay(alignment: .trailing) { Rectangle().fill(LitheTheme.divider).frame(width: 1) }
                             }
                         }
                         .foregroundStyle(LitheTheme.secondaryText)
-                        .background(LitheTheme.raised)
+                        .background(LitheTheme.toolHeader)
                     }
                 }
-                .frame(minWidth: max(geometry.size.width, CGFloat(columns.count) * 180 + 44), alignment: .topLeading)
+                .frame(minWidth: max(geometry.size.width, CGFloat(columns.count) * 180 + 44), minHeight: geometry.size.height, alignment: .topLeading)
             }
+            .litheScrollViewChrome()
         }
     }
 
@@ -804,7 +487,7 @@ private struct DatabaseQueryResultGrid: View {
     }
 }
 
-private struct DatabaseStructureView: View {
+struct DatabaseStructureView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var feature: DatabaseFeatureModel
     @State private var editor: DatabaseSchemaEditorKind?
@@ -815,62 +498,73 @@ private struct DatabaseStructureView: View {
         if let table = feature.selectedTable {
             VStack(spacing: 0) {
                 HStack(spacing: 5) {
-                    Text(table).font(LitheTheme.uiFont(size: 12.5, weight: .semibold))
+                    Text(table).font(LitheTheme.uiFont(size: 13))
                     Spacer()
-                    Button { editor = .column } label: { Image(systemName: "plus") }.litheIconButton().help("Add column")
-                    Button { editor = .index } label: { Image(systemName: "plus.square.on.square") }.litheIconButton().help("Add index")
-                    Button { editor = .foreignKey } label: { Image(systemName: "link.badge.plus") }.litheIconButton().help("Add foreign key")
-                    Button { Task { await feature.openTable(table) } } label: { Image(systemName: "arrow.clockwise") }.litheIconButton().help("Refresh structure")
+                    Button { editor = .column } label: { Image(systemName: "plus") }.litheToolbarIconButton().help("Add column")
+                    Button { editor = .index } label: { Image(systemName: "plus.square.on.square") }.litheToolbarIconButton().help("Add index")
+                    Button { editor = .foreignKey } label: { Image(systemName: "link.badge.plus") }.litheToolbarIconButton().help("Add foreign key")
+                    Button { Task { await feature.openTable(table) } } label: { Image(systemName: "arrow.clockwise") }.litheToolbarIconButton().help("Refresh structure")
                 }
-                .padding(.horizontal, 10).frame(height: 36).background(LitheTheme.toolHeader)
-                Rectangle().fill(LitheTheme.divider).frame(height: 1)
-                List {
-                    Section("Columns") {
-                        ForEach(feature.columns, id: \.self) { column in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(column)
-                                    Text(feature.columnTypes[column] ?? "")
-                                        .font(LitheTheme.uiFont(size: 10.5, design: .monospaced))
-                                        .foregroundStyle(LitheTheme.secondaryText)
-                                }
-                                Spacer()
-                                HStack(spacing: 2) {
-                                    Button {
-                                        editor = .renameColumn(column)
-                                    } label: {
-                                        Image(systemName: "pencil")
+                .padding(.horizontal, 8).frame(height: LitheTheme.Metrics.toolbarHeight).background(LitheTheme.editor)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        LitheToolWindowHeader(title: "Columns")
+                        LitheToolWindowHeaderDivider()
+                        Group {
+                            ForEach(feature.columns, id: \.self) { column in
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(column)
+                                        Text(feature.columnTypes[column] ?? "")
+                                            .font(LitheTheme.codeFont)
+                                            .foregroundStyle(LitheTheme.secondaryText)
                                     }
-                                    .litheIconButton()
-                                    .help("Rename Column…")
+                                    Spacer()
+                                    HStack(spacing: 2) {
+                                        Button {
+                                            editor = .renameColumn(column)
+                                        } label: {
+                                            Image(systemName: "pencil")
+                                        }
+                                        .litheToolbarIconButton()
+                                        .help("Rename Column…")
 
-                                    Button(role: .destructive) {
-                                        pendingChange = DatabaseSchemaChange(operation: "dropColumn", table: table, name: column)
-                                        showsDestructiveConfirmation = true
-                                    } label: {
-                                        Image(systemName: "trash")
-                                            .foregroundStyle(LitheTheme.error)
+                                        Button(role: .destructive) {
+                                            pendingChange = DatabaseSchemaChange(operation: "dropColumn", table: table, name: column)
+                                            showsDestructiveConfirmation = true
+                                        } label: {
+                                            Image(systemName: "trash")
+                                                .foregroundStyle(LitheTheme.error)
+                                        }
+                                        .litheToolbarIconButton()
+                                        .help("Drop Column")
                                     }
-                                    .litheIconButton()
-                                    .help("Drop Column")
                                 }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 6)
+                            }
+                        }
+                        LitheToolWindowHeader(title: "Indexes")
+                        LitheToolWindowHeaderDivider()
+                        Group {
+                            if feature.indexes.isEmpty { Text("No indexes").foregroundStyle(LitheTheme.secondaryText) }
+                            ForEach(Array(feature.indexes.enumerated()), id: \.offset) { _, row in
+                                Text(metadata(row))
+                            }
+                        }
+                        LitheToolWindowHeader(title: "Foreign Keys")
+                        LitheToolWindowHeaderDivider()
+                        Group {
+                            if feature.foreignKeys.isEmpty { Text("No foreign keys").foregroundStyle(LitheTheme.secondaryText) }
+                            ForEach(Array(feature.foreignKeys.enumerated()), id: \.offset) { _, row in
+                                Text(metadata(row))
                             }
                         }
                     }
-                    Section("Indexes") {
-                        if feature.indexes.isEmpty { Text("No indexes").foregroundStyle(LitheTheme.secondaryText) }
-                        ForEach(Array(feature.indexes.enumerated()), id: \.offset) { _, row in
-                            Text(metadata(row))
-                        }
-                    }
-                    Section("Foreign Keys") {
-                        if feature.foreignKeys.isEmpty { Text("No foreign keys").foregroundStyle(LitheTheme.secondaryText) }
-                        ForEach(Array(feature.foreignKeys.enumerated()), id: \.offset) { _, row in
-                            Text(metadata(row))
-                        }
-                    }
+                    .font(LitheTheme.uiFont(size: 13))
+                    .padding(16)
                 }
-                .listStyle(.inset)
+                .litheScrollViewChrome()
             }
             .sheet(item: $editor) { editor in
                 DatabaseSchemaEditorView(
@@ -1259,7 +953,7 @@ private struct SQLSyntaxEditor: NSViewRepresentable {
         let textView = SQLTextView(frame: NSRect(x: 0, y: 0, width: 900, height: 240))
         textView.delegate = context.coordinator
         textView.string = text
-        textView.font = LitheTheme.uiNSFont(size: 12.5, weight: .regular)
+        textView.font = LitheTheme.editorFont(size: 13)
         applyAppearance(to: textView, in: scrollView, isDark: isDark)
         textView.textContainerInset = NSSize(width: 11, height: 9)
         textView.isRichText = false
@@ -1310,20 +1004,14 @@ private struct SQLSyntaxEditor: NSViewRepresentable {
     }
 
     private func applyAppearance(to textView: NSTextView, in scrollView: NSScrollView, isDark: Bool) {
-        let background = isDark
-            ? NSColor(srgbRed: 0.075, green: 0.082, blue: 0.102, alpha: 1)
-            : NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
-        let foreground = isDark
-            ? NSColor(srgbRed: 0.84, green: 0.84, blue: 0.84, alpha: 1)
-            : NSColor(srgbRed: 0.16, green: 0.17, blue: 0.19, alpha: 1)
+        let background = NSColor(LitheTheme.editor)
+        let foreground = NSColor(LitheTheme.primaryText)
         scrollView.backgroundColor = background
         textView.backgroundColor = background
         textView.textColor = foreground
         textView.insertionPointColor = foreground
         textView.selectedTextAttributes = [
-            .backgroundColor: isDark
-                ? NSColor(srgbRed: 0.16, green: 0.31, blue: 0.54, alpha: 1)
-                : NSColor(srgbRed: 0.69, green: 0.82, blue: 0.98, alpha: 1),
+            .backgroundColor: NSColor(LitheTheme.selection),
             .foregroundColor: foreground
         ]
     }
@@ -1403,18 +1091,16 @@ private final class SQLTextView: NSTextView {
 private enum SQLSyntaxHighlighter {
     static func apply(to storage: NSTextStorage, isDark: Bool) {
         let range = NSRange(location: 0, length: storage.length)
-        let textColor = isDark
-            ? NSColor(srgbRed: 0.84, green: 0.84, blue: 0.84, alpha: 1)
-            : NSColor(srgbRed: 0.16, green: 0.17, blue: 0.19, alpha: 1)
+        let textColor = NSColor(LitheTheme.primaryText)
         storage.beginEditing()
         storage.setAttributes([
-            .font: LitheTheme.uiNSFont(size: 12.5, weight: .regular),
+            .font: LitheTheme.editorFont(size: 13),
             .foregroundColor: textColor
         ], range: range)
-        apply(pattern: "(?i)\\b(SELECT|FROM|WHERE|INSERT|INTO|VALUES|UPDATE|DELETE|MERGE|REPLACE|CREATE|ALTER|DROP|TRUNCATE|TABLE|VIEW|INDEX|DATABASE|SCHEMA|TRIGGER|PROCEDURE|FUNCTION|JOIN|LEFT|RIGHT|INNER|OUTER|ON|AS|AND|OR|NOT|NULL|IS|IN|EXISTS|BETWEEN|LIKE|DISTINCT|GROUP|BY|ORDER|HAVING|LIMIT|OFFSET|UNION|ALL|WITH|RETURNING|SET|SHOW|DESCRIBE|DESC|EXPLAIN|PRAGMA|BEGIN|COMMIT|ROLLBACK|GRANT|REVOKE)\\b", color: isDark ? NSColor(srgbRed: 0.43, green: 0.67, blue: 0.98, alpha: 1) : NSColor(srgbRed: 0.10, green: 0.39, blue: 0.72, alpha: 1), in: storage)
-        apply(pattern: "\\b\\d+(?:\\.\\d+)?\\b", color: isDark ? NSColor(srgbRed: 0.87, green: 0.69, blue: 0.38, alpha: 1) : NSColor(srgbRed: 0.55, green: 0.39, blue: 0.03, alpha: 1), in: storage)
-        apply(pattern: "'(?:''|[^'])*'|\\\"(?:\\\"\\\"|[^\\\"])*\\\"|`(?:``|[^`])*`", color: isDark ? NSColor(srgbRed: 0.66, green: 0.80, blue: 0.53, alpha: 1) : NSColor(srgbRed: 0.17, green: 0.48, blue: 0.20, alpha: 1), in: storage)
-        apply(pattern: "--[^\\n]*|/\\*[\\s\\S]*?\\*/", color: isDark ? NSColor(srgbRed: 0.48, green: 0.55, blue: 0.61, alpha: 1) : NSColor(srgbRed: 0.38, green: 0.42, blue: 0.46, alpha: 1), in: storage)
+        apply(pattern: "(?i)\\b(SELECT|FROM|WHERE|INSERT|INTO|VALUES|UPDATE|DELETE|MERGE|REPLACE|CREATE|ALTER|DROP|TRUNCATE|TABLE|VIEW|INDEX|DATABASE|SCHEMA|TRIGGER|PROCEDURE|FUNCTION|JOIN|LEFT|RIGHT|INNER|OUTER|ON|AS|AND|OR|NOT|NULL|IS|IN|EXISTS|BETWEEN|LIKE|DISTINCT|GROUP|BY|ORDER|HAVING|LIMIT|OFFSET|UNION|ALL|WITH|RETURNING|SET|SHOW|DESCRIBE|DESC|EXPLAIN|PRAGMA|BEGIN|COMMIT|ROLLBACK|GRANT|REVOKE)\\b", color: NSColor(LitheTheme.accent), in: storage)
+        apply(pattern: "\\b\\d+(?:\\.\\d+)?\\b", color: NSColor(LitheTheme.warning), in: storage)
+        apply(pattern: "'(?:''|[^'])*'|\\\"(?:\\\"\\\"|[^\\\"])*\\\"|`(?:``|[^`])*`", color: NSColor(LitheTheme.success), in: storage)
+        apply(pattern: "--[^\\n]*|/\\*[\\s\\S]*?\\*/", color: NSColor(LitheTheme.secondaryText), in: storage)
         storage.endEditing()
     }
 
@@ -1423,6 +1109,212 @@ private enum SQLSyntaxHighlighter {
         let range = NSRange(location: 0, length: storage.length)
         for match in expression.matches(in: storage.string, range: range) {
             storage.addAttribute(.foregroundColor, value: color, range: match.range)
+        }
+    }
+}
+
+/// Overview uses the existing database state; closing its tab does not release connections or drafts.
+struct DatabaseOverviewView: View {
+    @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var feature: DatabaseFeatureModel
+    @State private var showsConnectionEditor = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(spacing: 24) {
+                    statistic("Connections", value: feature.profiles.count)
+                    statistic("Connected", value: feature.connectedProfileCount)
+                    statistic("Database types", value: Set(feature.profiles.map(\.kind)).count)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                LitheToolWindowHeaderDivider()
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 20) {
+                        quickStart.frame(minWidth: 300, maxWidth: .infinity)
+                        commonActions.frame(width: 240)
+                    }
+                    VStack(alignment: .leading, spacing: 20) {
+                        quickStart
+                        commonActions
+                    }
+                }
+                recentSQL
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .litheScrollViewChrome()
+        .litheWorkbenchSurface(LitheTheme.editor)
+        .background(LitheCenteredPopup(isPresented: $showsConnectionEditor,
+                                       dialogTitle: String(localized: "Add Database Connection")) {
+            DatabaseConnectionEditor(isPresented: $showsConnectionEditor)
+                .environment(\.locale, model.settings.language.locale)
+                .id(model.settings.language)
+        })
+    }
+
+    private func statistic(_ title: LocalizedStringKey, value: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(LitheTheme.uiFont(size: 12))
+                .foregroundStyle(LitheTheme.secondaryText)
+            Text(value.formatted()).font(LitheTheme.uiFont(size: 22, weight: .medium))
+                .foregroundStyle(LitheTheme.primaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var quickStart: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            LitheToolWindowHeader(title: "Quick Start")
+            LitheToolWindowHeaderDivider()
+            if feature.profiles.isEmpty {
+                Text("No saved connections yet.")
+                    .font(LitheTheme.uiFont(size: 12))
+                    .foregroundStyle(LitheTheme.secondaryText)
+                    .padding(12)
+            } else {
+                ForEach(feature.profiles) { profile in
+                    Button { open(profile, query: false) } label: {
+                        HStack(spacing: 10) {
+                            DatabaseBrandIcon(kind: profile.kind, size: LitheTheme.Metrics.toolbarIconSize)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(profile.name).foregroundStyle(LitheTheme.primaryText)
+                                Text(profile.kind == .sqlite ? profile.path : "\(profile.host):\(profile.port)")
+                                    .foregroundStyle(LitheTheme.secondaryText)
+                            }
+                            .lineLimit(1)
+                            Spacer()
+                            status(profile)
+                        }
+                        .font(LitheTheme.uiFont(size: 12))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.litheNoPress)
+                    .litheRowHover()
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private var commonActions: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            LitheToolWindowHeader(title: "Common Actions")
+            LitheToolWindowHeaderDivider()
+            action("New Connection", icon: "expui/general/add.svg") { showsConnectionEditor = true }
+            action("New Query", icon: "expui/fileTypes/shell.svg",
+                   enabled: feature.profiles.contains { $0.kind.isSQLDatabase }) {
+                if let profile = feature.selectedProfile.flatMap({ $0.kind.isSQLDatabase ? $0 : nil })
+                    ?? feature.profiles.first(where: { $0.kind.isSQLDatabase }) {
+                    open(profile, query: true)
+                }
+            }
+            action("Browse Database", icon: "expui/toolwindows/toolWindowDataView@20x20.svg",
+                   enabled: !feature.profiles.isEmpty) {
+                if let profile = feature.selectedProfile ?? feature.profiles.first { open(profile, query: false) }
+            }
+            action("History", icon: "expui/general/history.svg") { openHistory() }
+        }
+    }
+
+    private var recentSQL: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            LitheToolWindowHeader(title: "Recent SQL") {
+                Button { openHistory() } label: {
+                    LitheIDEAIcon(resourcePath: "expui/general/history.svg", size: LitheTheme.Metrics.toolbarIconSize,
+                                  preservesOriginalColors: true)
+                }
+                .litheToolbarIconButton().workbenchHoverHelp(Text("SQL History"))
+                .accessibilityLabel("SQL History")
+            }
+            LitheToolWindowHeaderDivider()
+            if feature.sqlHistory.isEmpty {
+                Text("No SQL history yet.")
+                    .font(LitheTheme.uiFont(size: 12))
+                    .foregroundStyle(LitheTheme.secondaryText)
+                    .padding(12)
+            } else {
+                ForEach(Array(feature.sqlHistory.prefix(8))) { entry in
+                    Button {
+                        if let profile = feature.profiles.first(where: { $0.id == entry.profileID }) {
+                            open(profile, query: true, history: entry)
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
+                            Text(entry.sql.replacingOccurrences(of: "\n", with: " "))
+                                .font(LitheTheme.uiFont(size: 12, design: .monospaced))
+                                .foregroundStyle(LitheTheme.primaryText)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(entry.executedAt, style: .relative)
+                                .font(LitheTheme.uiFont(size: 11))
+                                .foregroundStyle(LitheTheme.secondaryText)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.litheNoPress)
+                    .litheRowHover(hoverBackground: feature.profiles.first(where: { $0.id == entry.profileID })?.kind.isSQLDatabase == true ? LitheTheme.hoverBackground : .clear)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .disabled(feature.profiles.first(where: { $0.id == entry.profileID })?.kind.isSQLDatabase != true)
+                }
+            }
+        }
+        .workbenchHoverTooltipScope()
+    }
+
+    private func action(_ title: LocalizedStringKey, icon: String, enabled: Bool = true,
+                        perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            HStack(spacing: 10) {
+                LitheIDEAIcon(resourcePath: icon, size: LitheTheme.Metrics.toolbarIconSize, preservesOriginalColors: true)
+                Text(title).font(LitheTheme.uiFont(size: 12))
+            }
+            .foregroundStyle(enabled ? LitheTheme.primaryText : LitheTheme.tertiaryText)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.litheNoPress)
+        .litheRowHover(hoverBackground: enabled ? LitheTheme.hoverBackground : .clear)
+        .disabled(!enabled)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func status(_ profile: DatabaseProfile) -> some View {
+        switch feature.connectionStatus(for: profile) {
+        case .idle: Text("Not connected").foregroundStyle(LitheTheme.secondaryText)
+        case .connecting: Text("Connecting").foregroundStyle(LitheTheme.secondaryText)
+        case .connected: Text("Connected").foregroundStyle(LitheTheme.success)
+        case .failed: Text("Connection failed").foregroundStyle(LitheTheme.warning)
+        }
+    }
+
+    private func openHistory() {
+        feature.workspaceSection = .history
+        model.openDatabaseWorkspace()
+    }
+
+    private func open(_ profile: DatabaseProfile, query: Bool, history: DatabaseSQLHistoryEntry? = nil) {
+        Task {
+            if feature.selectedProfileID != profile.id { await feature.select(profile) }
+            guard feature.selectedProfileID == profile.id, model.databaseFeatureIfActive === feature else { return }
+            if let history { feature.restoreSQLHistory(history) }
+            else if query { feature.addSQLTab() }
+            feature.workspaceSection = query ? .sql : .data
+            model.openDatabaseWorkspace()
         }
     }
 }

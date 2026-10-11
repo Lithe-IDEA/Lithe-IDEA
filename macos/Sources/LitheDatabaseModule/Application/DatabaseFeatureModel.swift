@@ -34,7 +34,6 @@ package final class DatabaseFeatureModel: ObservableObject {
     @Published package private(set) var tables: [String] = []
     @Published package private(set) var databaseOptions: [String] = []
     @Published package var selectedTable: String?
-    @Published package private(set) var openTableTabs: [String] = []
     @Published package private(set) var columns: [String] = []
     @Published package private(set) var columnTypes: [String: String] = [:]
     @Published package private(set) var rows: [DatabaseRow] = []
@@ -76,6 +75,9 @@ package final class DatabaseFeatureModel: ObservableObject {
     private let fileStorage: any DatabaseFileStorage
     private var backupTimer: Timer?
     private var scheduledBackupTasks: [UUID: Task<Void, Never>] = [:]
+    // Keep lightweight navigation and query drafts per connection; pages reload through existing operations.
+    private var workspaceSelections: [UUID: (database: String, table: String?, section: DatabaseWorkspaceSection,
+                                           sqlTabs: [DatabaseSQLTab], sqlTabID: UUID?)] = [:]
     private var profileGeneration: UInt64 = 0
     private var tableListRequestID: UUID?
     private var databaseListRequestID: UUID?
@@ -132,6 +134,7 @@ package final class DatabaseFeatureModel: ObservableObject {
         profileGeneration &+= 1
         for task in scheduledBackupTasks.values { task.cancel() }
         scheduledBackupTasks.removeAll()
+        workspaceSelections.removeAll()
         tableListRequestID = nil
         databaseListRequestID = nil
         tableRequestID = nil
@@ -206,6 +209,7 @@ package final class DatabaseFeatureModel: ObservableObject {
             let updated = profiles.filter { $0.id != profile.id }
             try connectionStore.save(updated); try connectionStore.deletePassword(for: profile.id); try connectionStore.deleteSQLHistory(for: profile.id); try connectionStore.deleteBackupSchedule(for: profile.id); try recoveryStore.deleteExecutionEvents(for: profile.id)
             profiles = updated
+            workspaceSelections.removeValue(forKey: profile.id)
             connectionStatuses.removeValue(forKey: profile.id)
             sqlHistory.removeAll { $0.profileID == profile.id }
             executionEvents.removeAll { $0.profileID == profile.id }
@@ -450,13 +454,9 @@ package final class DatabaseFeatureModel: ObservableObject {
                 if tables.contains(tableToRefresh) {
                     await openTable(tableToRefresh)
                 } else {
-                    openTableTabs.removeAll { !tables.contains($0) }
-                    selectedTable = openTableTabs.last
+                    selectedTable = nil
                     rows = []; sourceRows = []; columns = []; columnTypes = [:]
                     primaryKeyColumns = []; indexes = []; foreignKeys = []; totalRows = 0; currentOffset = 0
-                    if let replacement = selectedTable {
-                        await openTable(replacement)
-                    }
                 }
             }
         } catch {
@@ -506,6 +506,8 @@ package final class DatabaseFeatureModel: ObservableObject {
         updated[index] = updatedProfile
         do {
             try connectionStore.save(updated)
+            selectedTable = nil
+            resetSQLWorkspace()
             profiles = sortedProfiles(updated)
             activateProfile(updatedProfile)
             await refreshTables()
@@ -742,7 +744,6 @@ package final class DatabaseFeatureModel: ObservableObject {
         let generation = profileGeneration
         let requestID = UUID()
         tableRequestID = requestID
-        if !openTableTabs.contains(table) { openTableTabs.append(table) }
         selectedTable = table; isLoading = true; errorMessage = nil
         do {
             let connection = connection(profile)
@@ -779,18 +780,6 @@ package final class DatabaseFeatureModel: ObservableObject {
             }
         }
         if isCurrent(profileID: profile.id, generation: generation), tableRequestID == requestID { isLoading = false }
-    }
-
-    @discardableResult
-    package func closeTableTab(_ table: String) -> String? {
-        openTableTabs.removeAll { $0 == table }
-        guard selectedTable == table else { return selectedTable }
-        selectedTable = openTableTabs.last
-        if selectedTable == nil {
-            rows = []; sourceRows = []; columns = []; columnTypes = [:]
-            indexes = []; foreignKeys = []; totalRows = 0; currentOffset = 0
-        }
-        return selectedTable
     }
 
     package func loadPage(filters: [DatabaseFilter], sort: [DatabaseSort], offset: Int) async {
@@ -1751,7 +1740,20 @@ package final class DatabaseFeatureModel: ObservableObject {
         return message.count > 500 ? "\(message.prefix(497))..." : message
     }
 
+    private func rememberWorkspace() {
+        guard let profile = selectedProfile else { return }
+        clearSQLResults()
+        workspaceSelections[profile.id] = (profile.database, selectedTable, workspaceSection, sqlTabs, selectedSQLTabID)
+    }
+
+    package func showGlobalHistory() {
+        rememberWorkspace()
+        clearProfileScopedState()
+        workspaceSection = .history
+    }
+
     private func activateProfile(_ profile: DatabaseProfile) {
+        rememberWorkspace()
         profileGeneration &+= 1
         tableListRequestID = nil
         databaseListRequestID = nil
@@ -1764,7 +1766,6 @@ package final class DatabaseFeatureModel: ObservableObject {
         nacosInstanceRequestID = nil
         selectedProfileID = profile.id
         selectedTable = nil
-        openTableTabs = []
         columns = []
         columnTypes = [:]
         rows = []
@@ -1780,8 +1781,14 @@ package final class DatabaseFeatureModel: ObservableObject {
         lastExplainResult = nil
         lastDiagnostics = nil
         backupProgress = nil
-        clearSQLResults()
         resetSQLWorkspace()
+        workspaceSection = .data
+        if let saved = workspaceSelections[profile.id], saved.database == profile.database {
+            selectedTable = saved.table
+            workspaceSection = saved.section
+            sqlTabs = saved.sqlTabs
+            selectedSQLTabID = saved.sqlTabID
+        }
         clearSpecializedWorkspace()
         errorMessage = nil
         isLoading = true
@@ -1801,7 +1808,6 @@ package final class DatabaseFeatureModel: ObservableObject {
         nacosInstanceRequestID = nil
         selectedProfileID = nil
         selectedTable = nil
-        openTableTabs = []
         columns = []
         columnTypes = [:]
         rows = []

@@ -96,6 +96,70 @@ MacServiceContainer
 `DatabaseWorkspaceLifecycleTests` 覆盖原生视图在会话关闭后再次渲染、弹窗
 晚到刷新，以及模块休眠后资源清理、旧状态释放和唤醒的新实例隔离。
 
+### 数据库右侧入口与编辑器标签
+
+数据库连接树通过已有模块入口注册到右侧停靠区，与 Maven、Agent 共用一个
+位置；打开入口不替换左侧项目树，也不切换中央代码。搜索图标左侧的概览按钮
+按需打开可关闭的 Database Overview 标签，保留连接数、已连接数、类型数、
+快速开始、常用操作和最近八条 SQL 六个区域。统计、连接和历史直接读取现有
+DatabaseFeatureModel，不复制会话；共享标题、分隔线、字体、表面与行悬停代替旧卡片样式。
+概览的常用操作按钮取消 Spacer 撑满整行和零圆角悬停，复用共享 litheRowHover，背景只覆盖按钮内容及内边距，禁用动作不绘制悬停。
+依据 Community `c7f91397daa3a961b4e78bc634fe467a0a7d9ade` 的 `ActionButtonLook.paintBackground`，悬停背景取控件本身尺寸并扣除 insets；`IdeaActionButtonLook` 使用圆角背景，Islands 主题为 ActionButton 提供 hoverBackground token。这里复用项目已批准的圆角/颜色，不把主工具栏按钮尺寸套到概览。
+连接弹窗保留原生 DisclosureGroup 箭头和展开状态；Safety/Advanced network 的标签填满标题行，并在标签上切换同一状态，避免必须精确命中箭头。手势只作用于标签，不拦截展开内容的输入或开关。
+概览连接弹窗删除 SwiftUI sheet，改用与侧栏一致的 LitheCenteredPopup：animationBehavior.none、原生有标题子窗口，无系统 sheet 遮罩和额外自绘外框。
+概览和内容标签统一使用侧栏圆柱图标；每个连接在编辑器中保留一个数据库标签，标题使用配置的数据库名（无数据库名时使用连接名），不随 Data/SQL/Structure/History 页面切换改名。没有连接的全局历史仍使用 SQL History。
+概览和各数据库工作区可以同时保留；同一连接重复打开只选中已有标签。
+右侧树切换表，不再创建第二层表标签，原 `openTableTabs` 状态与关闭表入口一并删除。
+四个页面改用原始 16pt SVG 和共享 22pt 图标按钮，与刷新、编辑、更多、TSV、分页
+共用一行 30pt 工具栏。页面按钮保持选中背景、默认箭头、悬停名称与辅助功能标签；
+非 Data 页面或未选表时，表格操作禁用，页面切换仍可用。
+
+标签顺序只持有连接 ID；数据库模块仍只有一个状态对象与一套 Provider。
+模块记住各连接最后的表、页面、SQL 草稿及选中查询；切回时复用既有请求加载表，
+不缓存结果页或开启后台连接。SQL 查询结果和运行状态不跨连接带入。
+关闭标签不删除连接或草稿；休眠、关闭项目和禁用模块移除全部数据库标签，
+同时释放连接位置缓存。切换已配置连接的 MySQL 数据库会清理旧表与旧查询位置，
+避免把旧数据库的内容带入新库。
+
+不采用每张表独立标签、每个标签复制一个模块或永久缓存完整结果集：它们分别带来
+重复导航、重复资源生命周期和额外内存占用。代价是返回连接时会重新加载表，
+未提交的数据单元格编辑仍是当前视图状态，切换连接不会把草稿应用到另一连接。
+
+工具栏分隔线参考 Community `c7f91397daa3a961b4e78bc634fe467a0a7d9ade` 的
+`ActionToolbarImpl.kt` / `MySeparator`、`JBUI.CurrentTheme.Toolbar.SEPARATOR_COLOR`
+及 `ManyIslands{Dark,Light}.theme.json`：`ToolBar.separatorColor` 解析到
+`toolbar-border` / `core-border-transparent`，深色 `#FFFFFF21`、浅色 `#00000020`。
+共享 `LitheTheme.ActionToolbar.separator` 持有这个独立颜色，不改通用面板分隔线；
+分隔项保留 7pt 槽位与 1pt 线，删除数据工具栏使用通用 divider 的做法。
+Structure 图标使用同版 `platform/icons/src/expui/toolwindows/structure{,_dark}.svg`，
+Data/SQL/History 复用已经导入的 table/shell/history 资源，不新增数据库功能。
+
+数据库停靠入口使用 IDEA `IU-262.9437.185` 的 `DatabaseIconMappings.json` 所指定的 `icons/expui/dbms@20x20{,_dark}.svg` 描边圆柱；本机发行包 `intellij.database.jar` 中两份 SVG 均明确标注 Apache-2.0 授权，保留原始字节及 NOTICE 来源，不将其误称为 Community 资源。删除此前误用的调试器数据库对象图标。Maven 按 Community `c7f91397daa3a961b4e78bc634fe467a0a7d9ade` 的 `MavenIconMappings.json` 使用 `images/expui/toolwindow/maven@20x20{,_dark}.svg`，不放大旧 16pt 图标；Maven 面板标题移除左侧图标，保留标题及项目副标题。两处继续使用共享停靠按钮尺寸和模板配色。
+数据库连接树复用共享 litheTreeRow/Tree 的 24pt 行高、13pt 常规文字、16pt 图标与 19pt 层级缩进；展开箭头使用现有 IDEA SVG，移除连接颜色竖线、对象数胶囊和空表卡片，避免数据库单独定义一套树样式。连接品牌、状态、只读和保护语义保留；按用户要求，连接行删除只读锁图标，只显示保存的连接名称，不追加数据库类型。演示名称中人为添加的类型后缀仅在仓库外临时数据中清理，不对真实连接名称做自动裁剪。成功/失败状态显示在品牌图标右下角（绿/红点），未连接不加点，连接中保留进度提示，删除行尾重复类型与状态符号。Provider 改用 Community `c7f91397daa3a961b4e78bc634fe467a0a7d9ade` 的 `platform/icons/src/providers` 原始 16×16 SVG 及可用明暗变体，Nacos 保持现有资源；删除对应 DBX 大画布资源，避免图形实际占用过小。共享品牌图标缓存区分主题。状态点依据同版 `platform/icons/src/modifiers/dot.svg` 的 5pt 直径，按用户要求对现有主题语义色轻微提高饱和度，不修改全局配色。树容器使用共享左右 12pt、上下 4pt 留白；文件夹和连接行只追加层级缩进，删除首层额外的 7pt/4pt 留白，避免与容器内边距叠加；连接和表的选择色由共享活动区域观察器及窗口 key 状态共同决定，获得焦点时使用主题蓝色，点击树外或切换窗口后恢复非活动灰色，避免选择状态与焦点状态混淆。
+数据库 Data/SQL/Structure/History 导航使用共享工具栏图标按钮，删除原文字页签和原生分段按钮；数据空状态复用 LitheUnavailableView，删除蓝色装饰卡片。模块协调器在激活时观察操作错误并交给现有全局通知入口，重复激活不重复注册；休眠由能力 store 取消观察，侧栏隐藏不影响错误通知。连接树不调用手形光标修饰器，保留默认箭头。
+四个工作区页面删除独立查询/表页签底色和下划线、工具栏组合框与 WHERE/ORDER BY 装饰边框、History/Structure 原生 inset List；复用共享页签、标题分隔线、滚动条、按钮尺寸与常规字体。SQL 编辑器保留原生编辑/选择/补全，但字体和颜色来自 LitheTheme。概览 Quick Start 和 Recent SQL 与 Common Actions 一致，在内容及内边距上绘制共享圆角 hover，外留白在 hover 外布局，状态和时间继续右对齐，禁用动作不绘制 hover。参考 Community c7f91397daa3a961b4e78bc634fe467a0a7d9ade 的 platform/platform-impl/src/com/intellij/openapi/wm/impl/content/ContentTabLabel.java 与 platform/platform-impl/src/com/intellij/openapi/actionSystem/ex/ActionButtonLook.java，沿用已有共享 owner，不复制上游未实现的功能。
+数据库工具栏中的搜索、筛选和排序直接复用 `litheToolbarIconButton` / `LitheIconButtonStyle`：
+16pt 原始图标放入 22pt 点击区域，不用 SF Symbols 字重模拟，也不在筛选/排序外层
+再画边框。搜索默认仅显示图标，点击后仅展开共享输入，点击输入框后才聚焦；关闭搜索时清空查询，
+避免隐藏筛选条件。工具栏图标的用途提示复用 `workbenchHoverHelp` 和面板局部 `workbenchHoverTooltipScope`，包括禁用动作，不依赖原生 `.help` 的延迟提示。筛选和排序固定在工具栏右侧，左侧动作可横向滚动。空状态仅保留 13pt 常规灰色提示，不显示大图标、说明段落或重复的新建按钮；添加连接沿用工具栏加号。提示脱离连接树滚动内容，按 IDEA Community `c7f91397daa3a961b4e78bc634fe467a0a7d9ade` 的 `platform/platform-api/src/com/intellij/util/ui/StatusText.java` 在内容区横向居中、纵向约三分之一处显示，颜色沿 `SimpleTextAttributes.GRAYED_ATTRIBUTES` → `NamedColorUtil.getInactiveTextColor()` 对应 `Component.infoForeground`，复用已有 `LitheTheme.searchFieldPlaceholder` 同源 token。
+连接新建/编辑、文件夹和 DBX 导入复用 `LitheCenteredPopup` 原生居中标题框，
+输入框和确认/取消按钮复用 `LitheCommitDialogInputStyle` / `LitheCommitDialogButtonStyle`。
+连接和文件夹表单使用无分组背景的滚动容器，保留展开后的滚动空间；共享输入
+固定为 28pt 居中，并复用搜索输入的 I-beam 悬停处理，密码字段同样适用。
+连接表单用原生 `Grid` 统一标签列和输入列；Host/Port 同行，开关和提示文字
+跟随输入列。窗口按常规、SQLite、Nacos 和展开状态收缩/扩展高度，保留滚动。
+这里只复用 IDEA 的表单排版规则，不引入驱动管理、认证类型等新业务控件。
+弹窗继承模块环境与语言；DBX 关闭由显式绑定驱动并清空导入数据，保留连接验证、
+凭据存储和原生文件选择流程，不修改共享弹窗本身。
+图标来自 Community `c7f91397daa3a961b4e78bc634fe467a0a7d9ade` 的
+`platform/icons/src/expui`；`PlatformIconMappings.json` 提供 NewFolder、Console
+映射，`ActionButton.java` 的图标/按钮尺寸分离方式与现有共享样式一致。新增原始
+明暗资源记录在 `macos/Resources/IDEAIcons/NOTICE.txt`；这些是通用开源图标，
+不是专有数据库插件的动作资源。安装时作为静态资源打包，运行时只读，不生成缓存。
+
+验证由 `WorkbenchModuleUIRegistryTests` 和 `DatabaseWorkspaceLifecycleTests`
+覆盖停靠位置、重复打开、独立关闭与模块释放，完整工作台仍须实机核对。
+
 ### 插件宿主边界
 
 插件只能通过 `PluginHostContext` 按稳定 ID 获取宿主提供的窄协议，不得
@@ -183,3 +247,31 @@ API 也没有以此为前提。Lithe 先采用同进程模块边界和可恢复�
 - `Plugins/mac/Official/`
 - `macos/Tests/LitheApplicationKernelTests/`
 - `scripts/verify-module-boundaries.sh`
+
+Redis Key Browser 的标题栏、DB 标识、SCAN 搜索/刷新与空状态接入现有共享控件；移除红色图标底板、胶囊及局部错误条，错误统一由已有协调器通知，不重复显示。Estimate size 是布尔选项，沿用 Community `c7f91397` 的 `DarculaCheckBoxUI` 复选框语义，macOS 复用原生常规 checkbox 而非另写 Java 绘制器；刷新/搜索沿用同版原始 SVG 和共享 22pt 工具栏按钮。空浏览区填充可用高度，搜索保持顶部，避免空状态固有高度把整列垂直居中。此调整仅覆盖 Redis 截图指定区域，Nacos 和 Redis 有值编辑表单保持现有实现。
+
+工具栏置于 WHERE/ORDER BY 分栏上方，删除无动作的 All rows 胶囊；行号列替代复选框外观，原点击选行及 # 全选保留。单元格以原生焦点确定选中位置，以共享活动区域及 key-window 状态选择蓝/灰底色，切换表清理焦点，数字右对齐。树节点与表头 schema/objectGroup/table/column 的原始 16pt SVG 来自本机 IDEA IU-262.9437.185 的 DatabaseTools `lib/modules/intellij.database.jar`，每个资源明确 Apache-2.0 授权；它们不是 Community 来源，保留版权与 NOTICE，不复制数据库插件实现。
+
+Data 表格的实际基准为 Community c7f91397 的 `grid/impl`，不是通用 JBTable：GridColorSchemeUtil 读取编辑器 INDENT_GUIDE/SELECTION_BACKGROUND；SelectionColorLayer 经 DataGridUIUtil.softHighlightOf 对表头背景每个 RGB 通道加/减 16。删除原 toolHeader/toolWindowBorder 作为数据网格颜色的用法，专用共享 DatabaseGrid token 不改变侧栏与其他工具窗口。CellRenderingUtils 表头左内边距 4pt、DefaultTextRendererFactory 单元格左右 3pt，TableResultView 行高按字体行高乘共享编辑器行距后加 1pt 行间隔和 4pt 留白；排序使用 getSortOrderIcon 指向的原始 arrowSplitCenterV/arrowUp/arrowDown。筛选保留既有弹出动作，删除整块列表悬停背景，不增加截图中 Lithe 尚未实现的数据库功能。
+
+行号列对照同 revision 的 `grid/impl/src/run/ui/table/TableResultRowHeader.java`：文字由表格的 PLAIN 字体绘制并居中，Lithe 明确使用与数据相同的 13pt JetBrains Mono Regular 和 DatabaseGrid.text，避免继承普通按钮字重及前景色。沿 `SelectionColorLayer.getRowHeaderBackground` 与默认非透明行号栏规则，普通行继续用 softHighlightOf 背景，选中行号块取 GRID_CURRENT_ROW，即编辑器 CARET_ROW_COLOR（Islands Dark #1F2024、Light.xml #FCFAED）；选中单元格所在行与显式选中行都更新行号块，失焦不把行号块画成单元格蓝色。右侧保留源码的 1pt 网格边线，原行号选行、# 全选、删除禁用和右键动作不变。
+
+Data 网格全选之后，已有行和新增行的普通单元格点击都必须清除 selectedRows，再设置单元格焦点；否则全行背景层仍覆盖原选择，使逐个点击看起来没有效果。行号点击继续切换单行，# 继续全选/取消全选。只读连接继续禁止进入编辑；演示可编辑设置须作用于用户实际运行实例的同一条临时 SQLite 连接，不能只改变独立预览偏好。Tables/Collections 是可展开的分类节点，标题使用共享 Tree.text，数量使用 Tree.secondaryText，避免普通可点击文字被画成禁用样式。验证覆盖全选→逐行取消→单元格单选及编辑，并核对取消草稿不写入演示库。
+
+新增行与已有行必须在同一个 ForEach 中使用全表唯一行号，避免 LazyVStack 合并两个从 0 开始的标识后遗漏草稿行。对照同 revision 的 AddRowAction / GridUtil.newInsertOrCloneRowRequestSource，新增后滚动到末行并选中第一个单元格；单击只选中、双击再出现无框编辑器。行号延续已有数据，待提交整行复用 MutationsColorLayer → CellColors.INSERT → TableDiffColors.TDIFF_INSERTED 对应的共享 Diff.inserted 配色；空值取 GRID_NULL_VALUE 的 DEFAULT_LINE_COMMENT 色。尚未填写的列仍从插入字典中省略以保留数据库默认值，显式 Set NULL 才发送 null。提交使用 Community AllIcons.Actions.Upload 原始 SVG，撤销使用 intellij.grid.impl.xml 的 RevertSelected 所指定的 General.Reset；不仿造 Community 中未提供的数据库专用提交动作图标。新增在加载、无列和只读状态禁用；提交失败保留草稿，成功刷新后才清理。新增/连续新增/撤销在外部演示库中通过原生预览核对；DatabaseGridClickTests 继续保护共享单元格的即时点击回调，DatabaseToolbarAppearanceTests 核对新增的原始资源。
+
+筛选/排序弹出区域复用 LitheCommitDialogButtonStyle/InputStyle 与 LitheSettingsSegmentedControl，保留条件和查询动作。列宽移除等分视口策略，参考同版 DefaultGridColumnLayout 的内容测量、40pt 下限、黄金分割 preferred 上限；按用户要求分配面板剩余空间，不使用 full×1.2 上限；当前只采样前 100 条已加载数据，不支持冻结列/持久化拖动宽度。单击聚焦普通文本单元格，双击可写连接进入原 TextField 草稿编辑，失焦退出编辑；只读连接始终只显示文本，保留原行选择与菜单。
+
+数据库表头根据已有 primaryKeyColumns 元数据选择主键列图标，普通列保留 column.svg；主键列使用同版 IDEA DatabaseTools 明确 Apache-2.0 授权的 columnGoldKey.svg 原始 16pt 明暗变体，不拼接或重绘钥匙，也不把所有名为 id 的字段推定为主键。
+
+SQLite PRAGMA 的列声明类型可能为 NULL，实际返回值却是整数；sidecar 的共享 row_json 必须按 ValueRef 的实际类型解码，避免 pk/cid/notnull 被降为 unsupported。这同时影响主键图标和主键编辑约束，修复在共享解码处，不在 UI 按字段名猜主键。
+
+按用户要求，数据网格列少时也铺满当前面板：仍测量内容并按内容比例分配空余宽度，但不再保留 Community DefaultGridColumnLayout 的 full×1.2 上限；宽列总量超过面板时仍横向滚动。单击单元格保留整格选中色和键盘焦点，复用 Git Log 已有的 macOS 14+ 隐藏系统焦点效果入口，提取到共享 Theme；不再在文字周围重复画系统焦点框，macOS 13 保留兼容行为。
+
+数据表删除独立路径/属性工具栏，保留单行共享 30pt 工具栏和 16pt 原始 SVG、22pt 按钮，参考 Community `c7f91397daa3a961b4e78bc634fe467a0a7d9ade` 的 ActionButton/ActionButtonLook 与既有工具窗口共享基线。刷新和编辑动作在左，TSV/分页固定在右；跳转列、行详情及原导入/导出/批量操作收进 Data Tools，删除仅供旧工具栏使用的标签绘制函数，数据库顶层标签显示数据库名，内层表标签已删除。没有增加 IDEA 专有动作。
+
+工具栏禁用反馈由共享 `LitheIconButtonStyle` 读取环境中的 `isEnabled`，覆盖直接禁用、父组禁用和 helper 参数三条入口，避免每个调用者补透明度或重复变暗。沿 Community 同 revision 的 `platform/platform-impl/src/com/intellij/openapi/actionSystem/impl/ActionButton.java` 的 `getIcon`/`getPopState` 核对禁用图标及只有可用按钮进入 hover 的语义；保留原始 SVG，macOS 使用共享透明度降低原始灰色图标的亮度，透明度沿用既有 0.45，不声称复刻 Java 的像素滤镜。TSV 触发器复用同一按钮样式，只让文字标签保留固有宽度，删除局部 row-hover；分页继续复用同一图标样式。
+
+普通单元格的两个 SwiftUI TapGesture 会等待双击判定，不能承担即时选择。复用共享右键捕获视图的原生命中筛选模式，数据表局部 NSView 在左键 mouseDown 同步传递 clickCount：第一下选择，第二下可写连接编辑；Control-click/右键不截获，滚轮不命中，编辑中的 TextField 移除捕获层以保留原生插入点和输入。没有全局事件监视器或定时器，视图卸载即释放回调；保留原键盘焦点。DatabaseGridClickTests 在没有鼠标松开/定时器推进前断言首次回调，同时覆盖双击与菜单事件。
+
+单元格编辑状态依据 Community `c7f91397daa3a961b4e78bc634fe467a0a7d9ade` 的 `grid/impl/src/run/ui/grid/editors/GridCellEditorTextField.java`、`platform/platform-impl/src/com/intellij/ide/ui/laf/darcula/DarculaUIUtil.java` 和同版 Islands 深浅主题：编辑器使用网格原背景，焦点边框是内侧 2pt 矩形，颜色由 `Component.focusColor → control-brand-border → blue-80` 解析为 #3871E1；不是文字外面的原生圆角输入框。已有行与新增草稿行共用 DatabaseGrid token，焦点边框不拦截输入和右键，失焦时移除。上游 GridTableCellEditor 默认要求双击，本次按用户明确要求改为单击可写单元格就进入编辑；只读和已标记删除的行不进入编辑。点击行号或 # 结束当前编辑视图，保留已有草稿；取消仍通过 Discard，未提交不写数据库。验证单击即出现原生字段、相邻单元格切换、全选后单击、草稿行和深浅主题边框。

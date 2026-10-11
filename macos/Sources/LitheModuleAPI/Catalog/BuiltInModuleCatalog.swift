@@ -116,7 +116,7 @@ public enum BuiltInModuleCatalog {
             ModuleContribution(id: "ai.settings", kind: .settings, title: "AI Assistance", icon: "wand.and.stars")
         ],
         .database: [
-            ModuleContribution(id: "database.workspace", kind: .toolWindow, title: "Database", icon: "cylinder")
+            ModuleContribution(id: "database.workspace", kind: .toolWindow, title: "Database", icon: "cylinder", placement: .rightSidebar, order: 150, actionID: "database.toggle", rendererID: "database.workspace")
         ],
         .debug: [
             ModuleContribution(id: "debug.session", kind: .toolWindow, title: "Debug", icon: "ladybug", order: 700, actionID: "debug.toggle", rendererID: "debug.session")

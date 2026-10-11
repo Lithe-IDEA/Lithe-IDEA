@@ -16,6 +16,7 @@ struct DatabaseTableView: View {
     @State private var insertedRows: [DatabaseRow] = []
     @State private var selectedRows: Set<Int> = []
     @State private var deletedRows: Set<Int> = []
+    @State private var applyFailed = false
     @State private var exportDocument: DatabaseTransferDocument?
     @State private var temporaryExportURL: URL?
     @State private var exportFormat = DatabaseTransferFormat.csv
@@ -181,7 +182,7 @@ struct DatabaseTableView: View {
             ) { showsFilterPopover.toggle() }
             .frame(maxWidth: .infinity, alignment: .leading)
             .litheDropdown(isPresented: $showsFilterPopover) { filterPopover }
-            Rectangle().fill(gridBorder).frame(width: 1)
+            Rectangle().fill(gridBorder).frame(width: LitheTheme.DatabaseGrid.borderWidth)
             clausePill(title: Text(verbatim: sortClauseTitle), icon: "expui/general/sortBy.svg",
                        active: !appliedSort.isEmpty) { showsSortPopover.toggle() }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -196,7 +197,7 @@ struct DatabaseTableView: View {
         }
         .frame(height: 30)
         .background(LitheTheme.editor)
-        .overlay(alignment: .bottom) { Rectangle().fill(gridBorder).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(gridBorder).frame(height: LitheTheme.DatabaseGrid.borderWidth) }
     }
 
     private var dataActionBar: some View {
@@ -450,7 +451,6 @@ struct DatabaseTableView: View {
                             ForEach(0..<(feature.rows.count + insertedRows.count), id: \.self) { index in
                                 if index < feature.rows.count {
                                     rowView(index: index, row: feature.rows[index], columnWidths: widths)
-                                        .opacity(deletedRows.contains(index) ? 0.42 : 1)
                                 } else {
                                     insertedRowView(index: index - feature.rows.count, columnWidths: widths)
                                 }
@@ -483,6 +483,10 @@ struct DatabaseTableView: View {
     }
 
     private var gridBorder: Color { LitheTheme.DatabaseGrid.border }
+
+    private func mutationBackground(_ color: Color, row: Int) -> Color {
+        LitheTheme.DatabaseGrid.mutationBackground(color, highlighted: selectedRows.contains(row) || pasteAnchor?.row == row)
+    }
 
     private func cellTextAlignment(_ value: DatabaseValue?) -> TextAlignment {
         switch value {
@@ -539,14 +543,14 @@ struct DatabaseTableView: View {
                 .frame(width: columnWidths[column] ?? 40, height: 25, alignment: .leading)
                 .id("column-\(column)")
                 .overlay(alignment: .trailing) {
-                    Rectangle().fill(gridBorder).frame(width: 1)
+                    Rectangle().fill(gridBorder).frame(width: LitheTheme.DatabaseGrid.borderWidth)
                 }
             }
         }
         .font(LitheTheme.codeFont)
         .foregroundStyle(LitheTheme.DatabaseGrid.text)
         .background(LitheTheme.DatabaseGrid.headerBackground)
-        .overlay(alignment: .bottom) { Rectangle().fill(gridBorder).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(gridBorder).frame(height: LitheTheme.DatabaseGrid.borderWidth) }
     }
 
     private func rowView(index: Int, row: DatabaseRow, columnWidths: [String: CGFloat]) -> some View {
@@ -563,9 +567,11 @@ struct DatabaseTableView: View {
             }
             .buttonStyle(.litheNoPress)
             .accessibilityValue(selectedRows.contains(index) ? Text("Selected") : Text("Not selected"))
-            .background(selectedRows.contains(index) || pasteAnchor?.row == index
+            .background(deletedRows.contains(index)
+                ? mutationBackground(applyFailed ? LitheTheme.DatabaseGrid.failedMutation : LitheTheme.Diff.deleted, row: index)
+                : selectedRows.contains(index) || pasteAnchor?.row == index
                 ? LitheTheme.DatabaseGrid.currentRowBackground : LitheTheme.DatabaseGrid.headerBackground)
-            .overlay(alignment: .trailing) { Rectangle().fill(gridBorder).frame(width: 1) }
+            .overlay(alignment: .trailing) { Rectangle().fill(gridBorder).frame(width: LitheTheme.DatabaseGrid.borderWidth) }
             .disabled(deletedRows.contains(index))
             .litheContextMenu { rowContextMenu(index: index) }
             ForEach(feature.columns, id: \.self) { column in
@@ -597,9 +603,10 @@ struct DatabaseTableView: View {
                     .multilineTextAlignment(cellTextAlignment(row[column]))
                     .padding(.horizontal, 3)
                     .frame(width: columnWidths[column] ?? 40, height: LitheTheme.DatabaseGrid.rowHeight)
-                    .background(pasteAnchor == key && editingCell != key
+                    .background((pasteAnchor == key || selectedRows.contains(index)) && editingCell != key
                         ? (gridActive && controlActiveState == .key ? LitheTheme.DatabaseGrid.selected : LitheTheme.DatabaseGrid.inactiveSelected)
-                        : drafts[key] == nil ? Color.clear : LitheTheme.warning.opacity(0.12))
+                        : deletedRows.contains(index) || drafts[key] == nil ? Color.clear
+                        : mutationBackground(applyFailed ? LitheTheme.DatabaseGrid.failedMutation : LitheTheme.Diff.modified, row: index))
                     .contentShape(Rectangle())
                     .overlay {
                         if editingCell != key {
@@ -611,21 +618,23 @@ struct DatabaseTableView: View {
                             }
                         }
                     }
-                    .overlay(alignment: .trailing) { Rectangle().fill(gridBorder).frame(width: 1) }
+                    .overlay(alignment: .trailing) { Rectangle().fill(gridBorder).frame(width: LitheTheme.DatabaseGrid.borderWidth) }
                     .overlay {
                         if editingCell == key, gridActive, controlActiveState == .key {
                             Rectangle().strokeBorder(LitheTheme.DatabaseGrid.editingBorder,
                                 lineWidth: LitheTheme.DatabaseGrid.editingBorderWidth)
-                                .padding(.trailing, 1).padding(.bottom, 1)
+                                .padding(.trailing, LitheTheme.DatabaseGrid.borderWidth).padding(.bottom, LitheTheme.DatabaseGrid.borderWidth)
                                 .allowsHitTesting(false)
                         }
                     }
                     .litheContextMenu { cellContextMenu(row: index, column: column) }
             }
         }
-        .background(selectedRows.contains(index) ? (gridActive && controlActiveState == .key ? LitheTheme.DatabaseGrid.selected : LitheTheme.DatabaseGrid.inactiveSelected) : Color.clear)
+        .background(deletedRows.contains(index)
+            ? mutationBackground(applyFailed ? LitheTheme.DatabaseGrid.failedMutation : LitheTheme.Diff.deleted, row: index)
+            : selectedRows.contains(index) ? (gridActive && controlActiveState == .key ? LitheTheme.DatabaseGrid.selected : LitheTheme.DatabaseGrid.inactiveSelected) : Color.clear)
         .contentShape(Rectangle())
-        .overlay(alignment: .bottom) { Rectangle().fill(gridBorder).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(gridBorder).frame(height: LitheTheme.DatabaseGrid.borderWidth) }
     }
 
     private func insertedRowView(index: Int, columnWidths: [String: CGFloat]) -> some View {
@@ -633,7 +642,7 @@ struct DatabaseTableView: View {
             Text("\(feature.rows.count + index + 1)")
                 .font(LitheTheme.codeFont).foregroundStyle(LitheTheme.DatabaseGrid.text)
                 .frame(width: selectionColumnWidth, height: LitheTheme.DatabaseGrid.rowHeight)
-                .overlay(alignment: .trailing) { Rectangle().fill(gridBorder).frame(width: 1) }
+                .overlay(alignment: .trailing) { Rectangle().fill(gridBorder).frame(width: LitheTheme.DatabaseGrid.borderWidth) }
             ForEach(feature.columns, id: \.self) { column in
                 let key = CellKey(row: feature.rows.count + index, column: column)
                 let value = insertedRows[index][column]
@@ -675,12 +684,12 @@ struct DatabaseTableView: View {
                             }
                         }
                     }
-                    .overlay(alignment: .trailing) { Rectangle().fill(gridBorder).frame(width: 1) }
+                    .overlay(alignment: .trailing) { Rectangle().fill(gridBorder).frame(width: LitheTheme.DatabaseGrid.borderWidth) }
                     .overlay {
                         if editingCell == key, gridActive, controlActiveState == .key {
                             Rectangle().strokeBorder(LitheTheme.DatabaseGrid.editingBorder,
                                 lineWidth: LitheTheme.DatabaseGrid.editingBorderWidth)
-                                .padding(.trailing, 1).padding(.bottom, 1)
+                                .padding(.trailing, LitheTheme.DatabaseGrid.borderWidth).padding(.bottom, LitheTheme.DatabaseGrid.borderWidth)
                                 .allowsHitTesting(false)
                         }
                     }
@@ -692,8 +701,9 @@ struct DatabaseTableView: View {
                     }
             }
         }
-        .background(LitheTheme.Diff.inserted)
-        .overlay(alignment: .bottom) { Rectangle().fill(gridBorder).frame(height: 1) }
+        .background(mutationBackground(applyFailed ? LitheTheme.DatabaseGrid.failedMutation : LitheTheme.Diff.inserted,
+                                       row: feature.rows.count + index))
+        .overlay(alignment: .bottom) { Rectangle().fill(gridBorder).frame(height: LitheTheme.DatabaseGrid.borderWidth) }
     }
 
     private func rowContextMenu(index: Int) -> [LitheContextMenuItem] {
@@ -757,7 +767,7 @@ struct DatabaseTableView: View {
         else { selectedRows = selectableRowIndexes }
     }
     private func markSelectedForDeletion() { deletedRows.formUnion(selectedRows); selectedRows = [] }
-    private func discard() { drafts = [:]; insertedRows = []; selectedRows = []; deletedRows = []; pasteAnchor = nil; editingCell = nil; focusedCell = nil }
+    private func discard() { drafts = [:]; insertedRows = []; selectedRows = []; deletedRows = []; pasteAnchor = nil; editingCell = nil; focusedCell = nil; applyFailed = false }
 
     private func binding(row: Int, column: String, original: DatabaseValue?) -> Binding<String> {
         let key = CellKey(row: row, column: column)
@@ -813,14 +823,24 @@ struct DatabaseTableView: View {
     }
 
     private func performApply(confirmed: Bool) {
-        let cellDrafts = drafts.map { DatabaseCellDraft(rowIndex: $0.key.row, column: $0.key.column, value: $0.value) }
+        let submittedDrafts = drafts
+        let submittedRows = insertedRows
+        let submittedDeletions = deletedRows
+        let cellDrafts = submittedDrafts.map { DatabaseCellDraft(rowIndex: $0.key.row, column: $0.key.column, value: $0.value) }
+        let profileID = feature.selectedProfileID
+        let table = feature.selectedTable
         Task {
-            if await feature.apply(
+            guard feature.selectedProfileID == profileID, feature.selectedTable == table else { return }
+            let succeeded = await feature.apply(
                 drafts: cellDrafts,
-                insertedRows: insertedRows,
-                deletedIndexes: deletedRows,
+                insertedRows: submittedRows,
+                deletedIndexes: submittedDeletions,
                 confirmed: confirmed
-            ) {
+            )
+            guard feature.selectedProfileID == profileID, feature.selectedTable == table,
+                  drafts == submittedDrafts, insertedRows == submittedRows, deletedRows == submittedDeletions else { return }
+            applyFailed = !succeeded
+            if succeeded {
                 discard()
             }
         }

@@ -500,6 +500,24 @@ enum LitheTheme {
         // SelectionColorLayer.getRowHeaderBackground -> GRID_CURRENT_ROW / CARET_ROW_COLOR.
         static var currentRowBackground: Color { activeTheme == .lithe ? controlColor(light: 0xFCFAED, dark: 0x1F2024) : subtleSelection }
         static var border: Color { activeTheme == .lithe ? controlColor(light: 0xE6E6E6, dark: 0x323438) : guide }
+        // TableResultView reserves one logical pixel for each enabled grid line.
+        static let borderWidth: CGFloat = 1
+        // MutationsColorLayer -> MessageType.ERROR -> Islands Notification.errorBackground.
+        static var failedMutation: Color { controlColor(light: 0xFFF6F5, dark: 0x56272B) }
+        // SelectionColorLayer -> DataGridUIUtil.softHighlightOf, preserving the mutation hue.
+        static func mutationBackground(_ color: Color, highlighted: Bool) -> Color {
+            guard highlighted else { return color }
+            return Color(nsColor: NSColor(name: nil) { appearance in
+                var rgb = NSColor(color)
+                appearance.performAsCurrentDrawingAppearance {
+                    rgb = rgb.usingColorSpace(.deviceRGB) ?? rgb
+                }
+                let step: CGFloat = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? 16.0 / 255 : -16.0 / 255
+                return NSColor(red: min(1, max(0, rgb.redComponent + step)),
+                               green: min(1, max(0, rgb.greenComponent + step)),
+                               blue: min(1, max(0, rgb.blueComponent + step)), alpha: rgb.alphaComponent)
+            })
+        }
         static var text: Color { activeTheme == .lithe ? controlColor(light: 0x000000, dark: 0xBCBEC4) : primaryText }
         // GRID_NULL_VALUE inherits DEFAULT_LINE_COMMENT in the editor scheme.
         static var nullText: Color { activeTheme == .lithe ? controlColor(light: 0x8C8C8C, dark: 0x7A7E85) : secondaryText }

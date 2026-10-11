@@ -484,8 +484,12 @@ struct DatabaseTableView: View {
 
     private var gridBorder: Color { LitheTheme.DatabaseGrid.border }
 
+    private func isHighlightedRow(_ row: Int) -> Bool {
+        selectedRows.contains(row) || pasteAnchor?.row == row
+    }
+
     private func mutationBackground(_ color: Color, row: Int) -> Color {
-        LitheTheme.DatabaseGrid.mutationBackground(color, highlighted: selectedRows.contains(row) || pasteAnchor?.row == row)
+        LitheTheme.DatabaseGrid.mutationBackground(color, highlighted: isHighlightedRow(row))
     }
 
     private func cellTextAlignment(_ value: DatabaseValue?) -> TextAlignment {
@@ -542,6 +546,8 @@ struct DatabaseTableView: View {
                 .padding(.trailing, 3)
                 .frame(width: columnWidths[column] ?? 40, height: 25, alignment: .leading)
                 .id("column-\(column)")
+                .background(!selectedRows.isEmpty || pasteAnchor?.column == column
+                    ? LitheTheme.DatabaseGrid.currentRowBackground : Color.clear)
                 .overlay(alignment: .trailing) {
                     Rectangle().fill(gridBorder).frame(width: LitheTheme.DatabaseGrid.borderWidth)
                 }
@@ -550,7 +556,10 @@ struct DatabaseTableView: View {
         .font(LitheTheme.codeFont)
         .foregroundStyle(LitheTheme.DatabaseGrid.text)
         .background(LitheTheme.DatabaseGrid.headerBackground)
-        .overlay(alignment: .bottom) { Rectangle().fill(gridBorder).frame(height: LitheTheme.DatabaseGrid.borderWidth) }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(gridBorder).frame(height: LitheTheme.DatabaseGrid.borderWidth)
+                .padding(.leading, selectionColumnWidth)
+        }
     }
 
     private func rowView(index: Int, row: DatabaseRow, columnWidths: [String: CGFloat]) -> some View {
@@ -559,7 +568,7 @@ struct DatabaseTableView: View {
                 HStack(spacing: 7) {
                     Text("\(index + 1)")
                         .font(LitheTheme.codeFont)
-                        .foregroundStyle(LitheTheme.DatabaseGrid.text)
+                        .foregroundStyle(isHighlightedRow(index) ? LitheTheme.DatabaseGrid.currentRowNumber : LitheTheme.DatabaseGrid.rowNumber)
                         .monospacedDigit()
                 }
                 .frame(width: selectionColumnWidth, height: LitheTheme.DatabaseGrid.rowHeight)
@@ -569,9 +578,7 @@ struct DatabaseTableView: View {
             .accessibilityValue(selectedRows.contains(index) ? Text("Selected") : Text("Not selected"))
             .background(deletedRows.contains(index)
                 ? mutationBackground(applyFailed ? LitheTheme.DatabaseGrid.failedMutation : LitheTheme.Diff.deleted, row: index)
-                : selectedRows.contains(index) || pasteAnchor?.row == index
-                ? LitheTheme.DatabaseGrid.currentRowBackground : LitheTheme.DatabaseGrid.headerBackground)
-            .overlay(alignment: .trailing) { Rectangle().fill(gridBorder).frame(width: LitheTheme.DatabaseGrid.borderWidth) }
+                : isHighlightedRow(index) ? LitheTheme.DatabaseGrid.currentRowBackground : Color.clear)
             .disabled(deletedRows.contains(index))
             .litheContextMenu { rowContextMenu(index: index) }
             ForEach(feature.columns, id: \.self) { column in
@@ -632,17 +639,20 @@ struct DatabaseTableView: View {
         }
         .background(deletedRows.contains(index)
             ? mutationBackground(applyFailed ? LitheTheme.DatabaseGrid.failedMutation : LitheTheme.Diff.deleted, row: index)
-            : selectedRows.contains(index) ? (gridActive && controlActiveState == .key ? LitheTheme.DatabaseGrid.selected : LitheTheme.DatabaseGrid.inactiveSelected) : Color.clear)
+            : isHighlightedRow(index) ? LitheTheme.DatabaseGrid.currentRowBackground : Color.clear)
         .contentShape(Rectangle())
-        .overlay(alignment: .bottom) { Rectangle().fill(gridBorder).frame(height: LitheTheme.DatabaseGrid.borderWidth) }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(gridBorder).frame(height: LitheTheme.DatabaseGrid.borderWidth)
+                .padding(.leading, selectionColumnWidth)
+        }
     }
 
     private func insertedRowView(index: Int, columnWidths: [String: CGFloat]) -> some View {
         HStack(spacing: 0) {
             Text("\(feature.rows.count + index + 1)")
-                .font(LitheTheme.codeFont).foregroundStyle(LitheTheme.DatabaseGrid.text)
+                .font(LitheTheme.codeFont)
+                .foregroundStyle(isHighlightedRow(feature.rows.count + index) ? LitheTheme.DatabaseGrid.currentRowNumber : LitheTheme.DatabaseGrid.rowNumber)
                 .frame(width: selectionColumnWidth, height: LitheTheme.DatabaseGrid.rowHeight)
-                .overlay(alignment: .trailing) { Rectangle().fill(gridBorder).frame(width: LitheTheme.DatabaseGrid.borderWidth) }
             ForEach(feature.columns, id: \.self) { column in
                 let key = CellKey(row: feature.rows.count + index, column: column)
                 let value = insertedRows[index][column]
@@ -703,7 +713,10 @@ struct DatabaseTableView: View {
         }
         .background(mutationBackground(applyFailed ? LitheTheme.DatabaseGrid.failedMutation : LitheTheme.Diff.inserted,
                                        row: feature.rows.count + index))
-        .overlay(alignment: .bottom) { Rectangle().fill(gridBorder).frame(height: LitheTheme.DatabaseGrid.borderWidth) }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(gridBorder).frame(height: LitheTheme.DatabaseGrid.borderWidth)
+                .padding(.leading, selectionColumnWidth)
+        }
     }
 
     private func rowContextMenu(index: Int) -> [LitheContextMenuItem] {

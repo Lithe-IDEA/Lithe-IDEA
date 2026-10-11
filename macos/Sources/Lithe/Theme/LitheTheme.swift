@@ -499,6 +499,9 @@ enum LitheTheme {
         static var headerBackground: Color { activeTheme == .lithe ? controlColor(light: 0xEFEFEF, dark: 0x292A2C) : raised }
         // SelectionColorLayer.getRowHeaderBackground -> GRID_CURRENT_ROW / CARET_ROW_COLOR.
         static var currentRowBackground: Color { activeTheme == .lithe ? controlColor(light: 0xFCFAED, dark: 0x1F2024) : subtleSelection }
+        // Transparent row headers use editor line-number colors, not the cell foreground.
+        static var rowNumber: Color { activeTheme == .lithe ? controlColor(light: 0xADADAD, dark: 0x4B5059) : secondaryText }
+        static var currentRowNumber: Color { activeTheme == .lithe ? controlColor(light: 0xADADAD, dark: 0xA1A3AB) : primaryText }
         static var border: Color { activeTheme == .lithe ? controlColor(light: 0xE6E6E6, dark: 0x323438) : guide }
         // TableResultView reserves one logical pixel for each enabled grid line.
         static let borderWidth: CGFloat = 1

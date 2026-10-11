@@ -87,6 +87,7 @@ extension DatabaseWorkspaceSection {
 }
 
 struct DatabaseHistoryView: View {
+    @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var feature: DatabaseFeatureModel
 
     private var entries: [DatabaseSQLHistoryEntry] {
@@ -110,13 +111,10 @@ struct DatabaseHistoryView: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(entries) { entry in
                             Button {
-                                Task {
-                                    guard let profile = feature.profiles.first(where: { $0.id == entry.profileID }) else { return }
-                                    if feature.selectedProfileID != profile.id { await feature.select(profile) }
-                                    guard feature.selectedProfileID == profile.id else { return }
-                                    feature.restoreSQLHistory(entry)
-                                    feature.workspaceSection = .sql
-                                }
+                                model.selectDatabaseWorkspace(profileID: entry.profileID)
+                                guard model.databaseFeatureIfActive === feature, feature.selectedProfileID == entry.profileID else { return }
+                                feature.restoreSQLHistory(entry)
+                                feature.workspaceSection = .sql
                             } label: {
                                 HStack(spacing: 12) {
                                     VStack(alignment: .leading, spacing: 4) {
@@ -1308,13 +1306,10 @@ struct DatabaseOverviewView: View {
     }
 
     private func open(_ profile: DatabaseProfile, query: Bool, history: DatabaseSQLHistoryEntry? = nil) {
-        Task {
-            if feature.selectedProfileID != profile.id { await feature.select(profile) }
-            guard feature.selectedProfileID == profile.id, model.databaseFeatureIfActive === feature else { return }
-            if let history { feature.restoreSQLHistory(history) }
-            else if query { feature.addSQLTab() }
-            feature.workspaceSection = query ? .sql : .data
-            model.openDatabaseWorkspace()
-        }
+        model.selectDatabaseWorkspace(profileID: profile.id)
+        guard feature.selectedProfileID == profile.id, model.databaseFeatureIfActive === feature else { return }
+        if let history { feature.restoreSQLHistory(history) }
+        else if query { feature.addSQLTab() }
+        feature.workspaceSection = query ? .sql : .data
     }
 }

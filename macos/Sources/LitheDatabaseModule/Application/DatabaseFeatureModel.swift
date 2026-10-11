@@ -400,9 +400,6 @@ package final class DatabaseFeatureModel: ObservableObject {
         activateProfile(profile)
         if profile.kind.supportsDataGrid {
             await refreshTables()
-        } else {
-            setConnectionStatus(.connected, for: profile.id)
-            isLoading = false
         }
     }
 
@@ -1752,7 +1749,7 @@ package final class DatabaseFeatureModel: ObservableObject {
         workspaceSection = .history
     }
 
-    private func activateProfile(_ profile: DatabaseProfile) {
+    package func activateProfile(_ profile: DatabaseProfile) {
         rememberWorkspace()
         profileGeneration &+= 1
         tableListRequestID = nil
@@ -1791,8 +1788,8 @@ package final class DatabaseFeatureModel: ObservableObject {
         }
         clearSpecializedWorkspace()
         errorMessage = nil
-        isLoading = true
-        setConnectionStatus(.connecting, for: profile.id)
+        isLoading = profile.kind.supportsDataGrid
+        setConnectionStatus(profile.kind.supportsDataGrid ? .connecting : .connected, for: profile.id)
     }
 
     private func clearProfileScopedState() {

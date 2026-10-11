@@ -862,12 +862,10 @@ struct DatabaseSidebarView: View {
     }
 
     private func openSQLQuery(_ profile: DatabaseProfile, sql: String = "") {
-        Task {
-            if feature.selectedProfileID != profile.id { await feature.select(profile) }
-            feature.addSQLTab(sql: sql)
-            feature.workspaceSection = .sql
-            model.openDatabaseWorkspace()
-        }
+        model.selectDatabaseWorkspace(profileID: profile.id)
+        guard model.databaseFeatureIfActive === feature, feature.selectedProfileID == profile.id else { return }
+        feature.addSQLTab(sql: sql)
+        feature.workspaceSection = .sql
     }
 
     private func copyToPasteboard(_ value: String) {
@@ -987,13 +985,10 @@ struct DatabaseSidebarView: View {
     }
 
     private func openTable(_ profile: DatabaseProfile, table: String, section: DatabaseWorkspaceSection, sql: String = "") {
-        Task {
-            if feature.selectedProfileID != profile.id { await feature.select(profile) }
-            await feature.openTable(table)
-            if !sql.isEmpty { feature.addSQLTab(sql: sql) }
-            feature.workspaceSection = section
-            model.openDatabaseWorkspace()
-        }
+        model.selectDatabaseWorkspace(profileID: profile.id, table: table)
+        guard model.databaseFeatureIfActive === feature, feature.selectedProfileID == profile.id else { return }
+        if !sql.isEmpty { feature.addSQLTab(sql: sql) }
+        feature.workspaceSection = section
     }
 
     private func executeTableAction(_ action: DatabaseTableContextAction) {
@@ -1001,13 +996,15 @@ struct DatabaseSidebarView: View {
         let sql = action.kind == .clear
             ? "DELETE FROM \(quotedIdentifier(action.table, kind: action.profile.kind));"
             : "DROP TABLE \(quotedIdentifier(action.table, kind: action.profile.kind));"
+        model.selectDatabaseWorkspace(profileID: action.profile.id)
+        guard model.databaseFeatureIfActive === feature, feature.selectedProfileID == action.profile.id else { return }
+        feature.addSQLTab(sql: sql)
+        feature.workspaceSection = .sql
+        guard let tabID = feature.selectedSQLTabID else { return }
         Task {
-            if feature.selectedProfileID != action.profile.id { await feature.select(action.profile) }
-            feature.addSQLTab(sql: sql)
-            feature.workspaceSection = .sql
-            model.openDatabaseWorkspace()
-            guard let tabID = feature.selectedSQLTabID else { return }
+            guard model.databaseFeatureIfActive === feature, feature.selectedProfileID == action.profile.id else { return }
             await feature.runSQL(in: tabID, confirmedRisk: true)
+            guard model.databaseFeatureIfActive === feature, feature.selectedProfileID == action.profile.id else { return }
             if action.kind == .clear { await feature.openTable(action.table) }
             else { await feature.refreshTables() }
         }
@@ -1129,11 +1126,7 @@ struct DatabaseSidebarView: View {
 
     private func selectProfile(_ profile: DatabaseProfile, expand: Bool) {
         if expand { expandedProfileIDs = [profile.id] }
-        Task {
-            await feature.select(profile)
-            guard feature.selectedProfileID == profile.id else { return }
-            model.openDatabaseWorkspace()
-        }
+        model.selectDatabaseWorkspace(profileID: profile.id, refresh: true)
     }
 
     private func toggleProfile(_ profile: DatabaseProfile) {

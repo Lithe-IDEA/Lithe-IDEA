@@ -120,18 +120,26 @@ extension AppModel {
         editorTabOrderFeature.databaseSelected = true
     }
 
-    func selectDatabaseWorkspace(profileID: UUID?) {
+    func selectDatabaseWorkspace(profileID: UUID?, refresh: Bool = false, table: String? = nil) {
         guard let feature = databaseFeatureIfActive else { return }
-        if feature.selectedProfileID == profileID {
+        if let profileID, let profile = feature.profiles.first(where: { $0.id == profileID }) {
+            let needsRefresh = refresh || feature.selectedProfileID != profileID
+            if needsRefresh { feature.activateProfile(profile) }
+            if let table { feature.selectedTable = table }
+            // Navigation belongs to the click, not the completion of database I/O.
             openDatabaseWorkspace()
-        } else if let profileID, let profile = feature.profiles.first(where: { $0.id == profileID }) {
-            Task {
-                await feature.select(profile)
-                guard feature.selectedProfileID == profileID else { return }
-                openDatabaseWorkspace()
+            if (needsRefresh || table != nil), profile.kind.supportsDataGrid {
+                Task {
+                    guard databaseFeatureIfActive === feature, feature.selectedProfileID == profileID else { return }
+                    if needsRefresh {
+                        await feature.refreshTables()
+                    } else if let table, feature.selectedTable == table {
+                        await feature.openTable(table)
+                    }
+                }
             }
         } else if profileID == nil {
-            feature.showGlobalHistory()
+            if feature.selectedProfileID != nil { feature.showGlobalHistory() }
             openDatabaseWorkspace()
         }
     }

@@ -231,6 +231,64 @@ struct DatabaseWorkspaceLifecycleTests {
         }
         await runtime.shutdownAll()
     }
+
+    @Test(arguments: ["document", "overview", "close", "closeAll", "closeBeforeLoad"], [false, true])
+    func delayedConnectionLoadPreservesLaterNavigation(destination: String, fails: Bool) async throws {
+        let preferences = DatabaseLifecyclePreferences()
+        let store = DatabaseConnectionStore(store: preferences, secureStore: DatabaseLifecycleSecrets())
+        let first = DatabaseProfile(name: "First", kind: .redis)
+        let second = DatabaseProfile(name: "Second", kind: .sqlite)
+        try store.save([first, second])
+        let settings = AppSettings(store: preferences)
+        let model = AppModel(settings: settings, services: MacServiceContainer(
+            store: preferences, settings: settings, moduleLaunchMode: .safeMode
+        ).services)
+        let runner = GatedDatabaseWorkspaceRunner(fails: fails)
+        let feature = DatabaseFeatureModel(
+            operations: DatabaseSidecarService(processRunner: runner, executableURL: URL(fileURLWithPath: "/fixture/database")),
+            connectionStore: store
+        )
+        defer { runner.release.open(); feature.prepareForModuleRelease() }
+        model.cacheModuleCapability(DatabaseModuleCapability(feature: feature), id: .databaseWorkspace, moduleID: .database)
+        feature.activateProfile(first)
+        #expect(!feature.isLoading && feature.connectionStatus(for: first) == .connected)
+        model.documentFeature.openVirtualDocument(URL(string: "lithe-test://documents/Navigation.txt")!, text: "fixture", displayPath: nil)
+        do {
+            let document = try #require(model.openDocuments.first)
+            model.selectDatabaseWorkspace(profileID: second.id)
+            // The tab must become selected before I/O starts, so even a loading
+            // connection is immediately closable. This fails with the old await-then-open path.
+            #expect(feature.selectedProfileID == second.id)
+            #expect(model.isDatabaseWorkspaceSelected)
+            #expect(model.activeDatabaseEditorTab == .database(second.id))
+            if destination == "closeBeforeLoad" { model.closeDatabaseTab(.database(second.id)) }
+            #expect(await runner.entered.waitUntilOpen())
+            #expect(feature.isLoading)
+            switch destination {
+            case "document": model.selectEditorDocument(document)
+            case "overview": model.openDatabaseWorkspace(overview: true)
+            case "close": model.closeDatabaseTab(.database(second.id))
+            case "closeBeforeLoad": break
+            default: model.closeDatabaseWorkspace()
+            }
+            let expectedTabs = model.editorTabItems
+            let expectedSelected = model.isDatabaseWorkspaceSelected
+            let expectedOverview = model.editorTabOrderFeature.databaseOverviewSelected
+            runner.release.open()
+            #expect(await awaitChange(on: feature, until: { !feature.isLoading }))
+            #expect((feature.errorMessage != nil) == fails)
+            #expect(model.editorTabItems == expectedTabs)
+            #expect(model.isDatabaseWorkspaceSelected == expectedSelected)
+            #expect(model.editorTabOrderFeature.databaseOverviewSelected == expectedOverview)
+            if destination == "document" { #expect(model.activeDocumentID == document.id) }
+        } catch {
+            runner.release.open()
+            _ = await awaitChange(on: feature, until: { !feature.isLoading })
+            await model.shutdownProjectSession()
+            throw error
+        }
+        await model.shutdownProjectSession()
+    }
 }
 
 @MainActor
@@ -272,6 +330,33 @@ private struct EmptyDatabaseWorkspaceRunner: DatabaseProcessRunning {
               let id = input["id"] as? String,
               let output = try? JSONSerialization.data(withJSONObject: ["id": id, "ok": true, "result": []]) else {
             return DatabaseProcessResult(output: "Invalid fixture request", exitCode: 1)
+        }
+        return DatabaseProcessResult(output: String(decoding: output, as: UTF8.self), exitCode: 0)
+    }
+}
+
+private struct GatedDatabaseWorkspaceRunner: DatabaseProcessRunning {
+    let fails: Bool
+    let entered = TestGate()
+    let release = TestGate()
+
+    func runDatabaseProcess(_ request: DatabaseProcessRequest) -> DatabaseProcessResult {
+        guard let data = request.standardInput,
+              let input = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = input["id"] as? String else {
+            return DatabaseProcessResult(output: "Invalid fixture request", exitCode: 1)
+        }
+        if input["method"] as? String == "listTables" {
+            entered.open()
+            // This synchronous port runs on the production-owned worker, never MainActor.
+            guard release.waitSynchronously(timeout: 2) else {
+                Issue.record("Database navigation test did not release its request")
+                return DatabaseProcessResult(output: "Fixture deadline exceeded", exitCode: 1)
+            }
+            if fails { return DatabaseProcessResult(output: "Fixture connection failed", exitCode: 1) }
+        }
+        guard let output = try? JSONSerialization.data(withJSONObject: ["id": id, "ok": true, "result": []]) else {
+            return DatabaseProcessResult(output: "Invalid fixture response", exitCode: 1)
         }
         return DatabaseProcessResult(output: String(decoding: output, as: UTF8.self), exitCode: 0)
     }

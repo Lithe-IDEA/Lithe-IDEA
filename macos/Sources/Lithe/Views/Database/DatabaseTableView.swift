@@ -603,11 +603,11 @@ struct DatabaseTableView: View {
                     .contentShape(Rectangle())
                     .overlay {
                         if editingCell != key {
-                            DatabaseGridCellClickTarget { _ in
+                            DatabaseGridCellClickTarget { clickCount in
                                 selectedRows = []
                                 pasteAnchor = key
                                 focusedCell = key
-                                editingCell = feature.selectedProfile?.readOnly == true || deletedRows.contains(index) ? nil : key
+                                editingCell = clickCount >= 2 && feature.selectedProfile?.readOnly != true && !deletedRows.contains(index) ? key : nil
                             }
                         }
                     }
@@ -667,11 +667,11 @@ struct DatabaseTableView: View {
                     .contentShape(Rectangle())
                     .overlay {
                         if editingCell != key {
-                            DatabaseGridCellClickTarget { _ in
+                            DatabaseGridCellClickTarget { clickCount in
                                 selectedRows = []
                                 pasteAnchor = key
                                 focusedCell = key
-                                editingCell = feature.selectedProfile?.readOnly == true ? nil : key
+                                editingCell = clickCount >= 2 && feature.selectedProfile?.readOnly != true ? key : nil
                             }
                         }
                     }

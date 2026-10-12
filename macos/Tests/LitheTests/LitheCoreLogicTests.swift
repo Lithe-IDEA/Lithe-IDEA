@@ -1465,7 +1465,7 @@ struct LitheCoreLogicTests {
 
     @Test
     @MainActor
-    func databaseInvalidSQLClearsPreviousExecutionState() async throws {
+    func databaseFailedSQLClearsPreviousResultsAndRecordsFailure() async throws {
         let preferences = DatabaseTestKeyValueStore()
         let store = DatabaseConnectionStore(store: preferences, secureStore: DatabaseTestSecureStore())
         let profile = DatabaseProfile(name: "SQLite", kind: .sqlite, path: "/tmp/lithe-test.sqlite")
@@ -1476,6 +1476,10 @@ struct LitheCoreLogicTests {
             let id = object["id"] as! String
             let method = object["method"] as! String
             let result: String
+            if method == "query", let params = object["params"] as? [String: Any],
+               (params["sql"] as? String)?.contains("missing_table") == true {
+                return ProcessResult(output: #"{"id":"\#(id)","ok":false,"error":{"code":"syntax_error","message":"no such table: missing_table"}}"#, exitCode: 0)
+            }
             if method == "query" {
                 result = #"{"rows":[{"value":1}],"columns":["value"],"truncated":false}"#
             } else {
@@ -1495,12 +1499,21 @@ struct LitheCoreLogicTests {
         #expect(feature.selectedSQLTab?.result?.rows.count == 1)
         #expect(feature.selectedSQLTab?.execution != nil)
 
-        feature.updateSQL("SELEC 1", in: tabID)
+        feature.updateSQL("SELECT * FROM missing_table", in: tabID)
         await feature.runSQL(in: tabID)
         #expect(feature.selectedSQLTab?.result == nil)
-        #expect(feature.selectedSQLTab?.execution == nil)
+        #expect(feature.selectedSQLTab?.execution?.rowsReturned == nil)
+        #expect(feature.selectedSQLTab?.execution != nil)
+        #expect(feature.selectedSQLTab?.statementExecutions.last?.errorMessage?.contains("missing_table") == true)
+        #expect(feature.sqlHistory.count == 2)
         #expect(feature.selectedSQLTab?.rowsAffected == nil)
         #expect(feature.selectedSQLTab?.errorMessage != nil)
+
+        // Empty input is rejected before execution and must not create another history entry.
+        feature.updateSQL(" ", in: tabID)
+        await feature.runSQL(in: tabID)
+        #expect(feature.selectedSQLTab?.execution == nil)
+        #expect(feature.sqlHistory.count == 2)
     }
 
     @Test
@@ -1843,14 +1856,14 @@ struct LitheCoreLogicTests {
         }
         #expect(sqlRequests.map(\.0) == ["execute", "query", "execute"])
         #expect(sqlRequests.map(\.1) == [
-            "INSERT INTO items VALUES (1)",
-            "SELECT 1",
-            "UPDATE items SET value = 2 WHERE id = 1"
+            "INSERT INTO items\nVALUES(1)",
+            "SELECT\n    1",
+            "UPDATE items\nSET value = 2\nWHERE id = 1"
         ])
         #expect(feature.selectedSQLTab?.result?.rows.count == 1)
         #expect(feature.selectedSQLTab?.rowsAffected == 5)
         #expect(feature.selectedSQLTab?.execution?.rowsReturned == 1)
-        #expect(feature.sqlHistory.first?.sql.contains("SELECT 1") == true)
+        #expect(feature.sqlHistory.first?.sql.contains("SELECT\n    1") == true)
     }
 
     @Test
@@ -1892,9 +1905,12 @@ struct LitheCoreLogicTests {
                   let params = object["params"] as? [String: Any] else { return nil }
             return params["sql"] as? String
         }
-        #expect(querySQL == ["SELECT 1", "SELECT bad"])
+        #expect(querySQL == ["SELECT\n    1", "SELECT\n    bad"])
         #expect(feature.selectedSQLTab?.errorMessage?.contains("Statement 2 failed") == true)
-        #expect(feature.sqlHistory.isEmpty)
+        #expect(feature.sqlHistory.count == 1)
+        #expect(feature.sqlHistory.first?.sql == feature.selectedSQLTab?.sql)
+        #expect(feature.selectedSQLTab?.statementExecutions.count == 2)
+        #expect(feature.selectedSQLTab?.statementExecutions.last?.errorMessage != nil)
     }
 
     @Test

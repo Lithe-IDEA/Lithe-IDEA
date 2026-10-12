@@ -1610,6 +1610,7 @@ struct DatabaseConnectionEditor: View {
     @State private var networkExpanded = false
     @State private var usesSSHTunnel = false
     @State private var hasSavedPassword = false
+    @State private var isConnecting = false
     @FocusState private var focusedField: String?
 
     private let profile: DatabaseProfile?
@@ -1950,13 +1951,13 @@ struct DatabaseConnectionEditor: View {
                     connect()
                 } label: {
                     HStack(spacing: 6) {
-                        if feature.isLoading { ProgressView().controlSize(.small) }
-                        Text(feature.isLoading ? "Connecting…" : "Connect")
+                        if isConnecting { ProgressView().controlSize(.small) }
+                        Text(isConnecting ? "Connecting…" : "Connect")
                     }
                 }
                     .buttonStyle(LitheCommitDialogButtonStyle(primary: true))
                     .keyboardShortcut(.defaultAction)
-                    .disabled(name.isEmpty || (kind == .sqlite ? path.isEmpty : host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) || redisDatabaseValidationMessage != nil || feature.isLoading)
+                    .disabled(name.isEmpty || (kind == .sqlite ? path.isEmpty : host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) || redisDatabaseValidationMessage != nil || isConnecting)
             }
             .padding(.horizontal, 16)
             .frame(height: 58)
@@ -1992,12 +1993,15 @@ struct DatabaseConnectionEditor: View {
     }
 
     private func connect() {
+        guard !isConnecting else { return }
         if let redisDatabaseValidationMessage {
             feature.errorMessage = redisDatabaseValidationMessage
             return
         }
         let candidate = DatabaseProfile(id: profile?.id ?? UUID(), name: name, kind: kind, host: host, port: UInt16(port) ?? 0, username: username, database: database, path: path, ssl: ssl, group: "", folderID: folderID, colorHex: colorHex, readOnly: readOnly, productionProtection: productionProtection, maskSensitiveFields: maskSensitiveFields, sensitiveColumnPatterns: sensitiveColumnPatterns.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }, caCertificatePath: ssl ? caCertificatePath : "", serverName: ssl ? serverName : "", sshHost: usesSSHTunnel ? sshHost : "", sshPort: usesSSHTunnel ? (UInt16(sshPort) ?? 22) : 0, sshUsername: usesSSHTunnel ? sshUsername : "", sshKeyPath: usesSSHTunnel ? sshKeyPath : "", sshLocalPort: usesSSHTunnel ? (UInt16(sshLocalPort) ?? 0) : 0, proxyURL: usesSSHTunnel ? proxyURL : "")
+        isConnecting = true
         Task {
+            defer { isConnecting = false }
             let saved = if profile == nil {
                 await feature.add(candidate, password: password)
             } else {

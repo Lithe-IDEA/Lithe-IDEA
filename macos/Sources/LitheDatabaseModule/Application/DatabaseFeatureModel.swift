@@ -185,7 +185,9 @@ package final class DatabaseFeatureModel: ObservableObject {
 
     private func save(_ profile: DatabaseProfile, password: String?) async -> Bool {
         let generation = profileGeneration
-        isLoading = true; errorMessage = nil
+        let tracksUI = selectedProfileID == profile.id
+        if tracksUI { isLoading = true }
+        errorMessage = nil
         setConnectionStatus(.connecting, for: profile.id)
         do {
             var profile = profile
@@ -212,7 +214,7 @@ package final class DatabaseFeatureModel: ObservableObject {
             profiles = sortedProfiles(updated)
             setConnectionStatus(.connected, for: profile.id)
             guard profileGeneration == generation else { return true }
-            guard selectedProfileID == profile.id else { isLoading = false; return true }
+            guard selectedProfileID == profile.id else { return true }
             activateProfile(profile)
             if profile.kind.supportsDataGrid {
                 await refreshTables()
@@ -224,7 +226,7 @@ package final class DatabaseFeatureModel: ObservableObject {
             setConnectionStatus(.failed, for: profile.id)
             if profileGeneration == generation {
                 errorMessage = executionError(error)
-                isLoading = false
+                if tracksUI { isLoading = false }
             }
             return false
         }

@@ -566,6 +566,56 @@ struct DatabaseWorkspaceLifecycleTests {
         await model.shutdownProjectSession()
     }
 
+    @Test(arguments: ["idle", "refresh", "open", "page"], [(false, false), (false, true), (true, false), (true, true)])
+    func backgroundSavePreservesCurrentLoading(operation: String, scenario: (Bool, Bool)) async throws {
+        let (saveFirst, fails) = scenario
+        let store = DatabaseConnectionStore(store: DatabaseLifecyclePreferences(), secureStore: DatabaseLifecycleSecrets())
+        let first = DatabaseProfile(name: "First", kind: .sqlite, database: "first")
+        let second = DatabaseProfile(name: "Second", kind: .sqlite, database: "second")
+        try store.save([first, second])
+        let runner = GatedBackgroundSaveRunner(operation: operation, fails: fails)
+        let feature = DatabaseFeatureModel(
+            operations: DatabaseSidecarService(processRunner: runner, executableURL: URL(fileURLWithPath: "/fixture/database")),
+            connectionStore: store
+        )
+        defer { runner.loadRelease.open(); runner.saveRelease.open(); feature.prepareForModuleRelease() }
+        feature.activateProfile(first)
+        if operation == "idle" { await feature.refreshTables() }
+        if operation == "page" { await feature.openTable("customers") }
+        let load = Task { @MainActor in
+            switch operation {
+            case "refresh": await feature.refreshTables()
+            case "open": await feature.openTable("customers")
+            case "page": await feature.loadPage(filters: [], sort: [], offset: 200)
+            default: break
+            }
+        }
+        if operation != "idle" { #expect(await runner.loadEntered.waitUntilOpen()) }
+        else { await load.value }
+        #expect(feature.isLoading == (operation != "idle"))
+        let save = Task { @MainActor in await feature.update(second, password: nil) }
+        #expect(await runner.saveEntered.waitUntilOpen())
+        #expect(feature.connectionStatus(for: second) == .connecting)
+        #expect(feature.isLoading == (operation != "idle"))
+        // Control both completion orders without sleeps; neither B's start nor finish owns A's loading.
+        if saveFirst {
+            runner.saveRelease.open()
+            #expect(await save.value == !fails)
+            #expect(feature.isLoading == (operation != "idle"))
+            runner.loadRelease.open()
+            await load.value
+        } else {
+            runner.loadRelease.open()
+            await load.value
+            #expect(!feature.isLoading)
+            runner.saveRelease.open()
+            #expect(await save.value == !fails)
+        }
+        #expect(!feature.isLoading)
+        #expect(feature.selectedProfileID == first.id)
+        #expect(feature.connectionStatus(for: second) == (fails ? .failed : .connected))
+    }
+
     @Test(arguments: [false, true], [DatabaseKind.sqlite, .redis])
     func retainedViewsRenderAfterProjectSessionShutdown(hasSelectedConnection: Bool, kind: DatabaseKind) async throws {
         let preferences = DatabaseLifecyclePreferences()
@@ -1136,6 +1186,38 @@ private struct EmptyDatabaseWorkspaceRunner: DatabaseProcessRunning {
             return DatabaseProcessResult(output: "Invalid fixture request", exitCode: 1)
         }
         return DatabaseProcessResult(output: String(decoding: output, as: UTF8.self), exitCode: 0)
+    }
+}
+
+private struct GatedBackgroundSaveRunner: DatabaseProcessRunning {
+    let operation: String
+    let fails: Bool
+    let loadEntered = TestGate()
+    let loadRelease = TestGate()
+    let saveEntered = TestGate()
+    let saveRelease = TestGate()
+
+    func runDatabaseProcess(_ request: DatabaseProcessRequest) -> DatabaseProcessResult {
+        guard let data = request.standardInput,
+              let input = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let method = input["method"] as? String else {
+            return DatabaseProcessResult(output: "Invalid fixture request", exitCode: 1)
+        }
+        let params = input["params"] as? [String: Any]
+        let isSave = method == "testConnection"
+        let isLoad = (operation == "refresh" && method == "listTables")
+            || (operation == "open" && method == "describeTable")
+            || (operation == "page" && method == "pageTable" && params?["offset"] as? Int == 200)
+        if isSave || isLoad {
+            (isSave ? saveEntered : loadEntered).open()
+            // The synchronous port runs on the production worker, with cleanup and a local deadline.
+            guard (isSave ? saveRelease : loadRelease).waitSynchronously(timeout: 5) else {
+                Issue.record("Background save test did not release its request")
+                return DatabaseProcessResult(output: "Fixture deadline exceeded", exitCode: 1)
+            }
+            if isSave && fails { return DatabaseProcessResult(output: "Fixture connection failed", exitCode: 1) }
+        }
+        return TableEditsWorkspaceRunner().runDatabaseProcess(request)
     }
 }
 

@@ -1,0 +1,29 @@
+name: Issue 18 source snapshot
+
+on:
+  push:
+    branches: [fix/issue-18-text-encodings]
+    paths: [.github/workflows/issue-18-source-snapshot.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Package tracked source and history for isolated validation
+        shell: bash
+        run: git bundle create "$RUNNER_TEMP/issue-18-source.bundle" HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue-18-source
+          path: ${{ runner.temp }}/issue-18-source.bundle
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error

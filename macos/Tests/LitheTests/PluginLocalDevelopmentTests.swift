@@ -188,6 +188,103 @@ struct PluginLocalDevelopmentTests {
         #expect(snapshot.origin == .localDevelopment)
         #expect(snapshot.requiresRestart)
     }
+
+    @Test
+    func rollbackVerifiesEachVersionWithTheOriginItWasInstalledWith() throws {
+        let fixture = try PluginTrustFixture()
+        defer { fixture.remove() }
+        let store = MacPluginPackageStore(
+            rootURL: fixture.root.appendingPathComponent("installed", isDirectory: true),
+            verifier: MacOfficialPluginSignatureVerifier(
+                trustedPublisherKeys: ["test-publisher-v1": fixture.privateKey.publicKey],
+                allowsLocalDevelopmentPackages: true,
+                hostBundleURL: fixture.hostBundleURL
+            )
+        )
+        let signedUpdate = try fixture.makePackage(version: PluginVersion(major: 0, minor: 3, patch: 1))
+        try fixture.sign(packageAt: signedUpdate.url, manifest: signedUpdate.manifest, keyID: "test-publisher-v1")
+
+        // Development package first, then the signed release package.
+        try store.installPackage(from: fixture.packageURL, origin: .localDevelopment)
+        let updated = try store.installPackage(from: signedUpdate.url, origin: .marketplace)
+        #expect(updated.installation.origin == .marketplace)
+        #expect(updated.installation.previousOrigin == .localDevelopment)
+
+        // Rolling back restores the unsigned package under its own origin.
+        let restored = try store.rollback(fixture.manifest.id)
+        #expect(restored.manifest.version == fixture.manifest.version)
+        #expect(restored.installation.origin == .localDevelopment)
+        #expect(restored.installation.previousOrigin == .marketplace)
+
+        // And rolling forward again verifies the signed package as signed.
+        let reapplied = try store.rollback(fixture.manifest.id)
+        #expect(reapplied.manifest.version == signedUpdate.manifest.version)
+        #expect(reapplied.installation.origin == .marketplace)
+        #expect(reapplied.installation.previousOrigin == .localDevelopment)
+        #expect(try store.scanInstalledPlugins().issues.isEmpty)
+    }
+
+    @Test
+    func onlyPackagesThatRequireAPublisherSignatureCanBeDevelopmentPackages() throws {
+        let publisherFixture = try PluginTrustFixture(signatureRequirement: .publisherPackage)
+        defer { publisherFixture.remove() }
+        let teamFixture = try PluginTrustFixture(signatureRequirement: .sameTeamAsHost)
+        defer { teamFixture.remove() }
+
+        #expect(MacOfficialPluginSignatureVerifier.isUnsignedDevelopmentPackage(
+            at: publisherFixture.packageURL,
+            manifest: publisherFixture.manifest
+        ))
+        // A same-team package never carries a publisher signature, so an
+        // unsigned one is a normal package rather than a development package.
+        #expect(!MacOfficialPluginSignatureVerifier.isUnsignedDevelopmentPackage(
+            at: teamFixture.packageURL,
+            manifest: teamFixture.manifest
+        ))
+        try publisherFixture.signPackage(keyID: "test-publisher-v1")
+        #expect(!MacOfficialPluginSignatureVerifier.isUnsignedDevelopmentPackage(
+            at: publisherFixture.packageURL,
+            manifest: publisherFixture.manifest
+        ))
+
+        // A development origin cannot relax a same-team package's checks.
+        let verifier = MacOfficialPluginSignatureVerifier(
+            trustedPublisherKeys: [:],
+            allowsLocalDevelopmentPackages: true,
+            hostBundleURL: teamFixture.hostBundleURL
+        )
+        #expect(throws: PluginPackageStoreError.signingTeamMismatch) {
+            try verifier.verify(
+                packageAt: teamFixture.packageURL,
+                manifest: teamFixture.manifest,
+                origin: .localDevelopment
+            )
+        }
+    }
+
+    @Test
+    func signatureDocumentInASameTeamPackageIsVerified() throws {
+        let fixture = try PluginTrustFixture(signatureRequirement: .sameTeamAsHost)
+        defer { fixture.remove() }
+        let untrustedKey = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 9, count: 32))
+        try fixture.sign(
+            packageAt: fixture.packageURL,
+            manifest: fixture.manifest,
+            keyID: "test-forged",
+            privateKey: untrustedKey
+        )
+        let verifier = MacOfficialPluginSignatureVerifier(
+            trustedPublisherKeys: ["test-publisher-v1": fixture.privateKey.publicKey],
+            allowsLocalDevelopmentPackages: true,
+            hostBundleURL: fixture.hostBundleURL
+        )
+
+        #expect(throws: PluginPackageStoreError.invalidPackageSignature(
+            PluginPackageSignature.Error.untrustedKey("test-forged").localizedDescription
+        )) {
+            try verifier.verify(packageAt: fixture.packageURL, manifest: fixture.manifest, origin: .marketplace)
+        }
+    }
 }
 
 struct NodeLanguageToolEnvironmentTests {
@@ -234,6 +331,36 @@ struct NodeLanguageToolEnvironmentTests {
 
     @Test
     @MainActor
+    func languageToolEnvironmentNeverSelectsAProjectProvidedNode() {
+        let projectNode = RuntimeToolCandidate(
+            command: "node",
+            executableURL: URL(fileURLWithPath: "/untrusted-project/.lithe/bin/node"),
+            source: .project,
+            detail: ".lithe/bin/node"
+        )
+        let homebrewNode = RuntimeToolCandidate(
+            command: "node",
+            executableURL: URL(fileURLWithPath: "/fixture-homebrew/bin/node"),
+            source: .homebrew,
+            detail: nil
+        )
+        let withGlobalNode = ProjectRuntimeService(
+            runtimeLocator: NodeEnvironmentTestRuntimeLocator(environment: ["PATH": "/usr/bin:/bin"]),
+            store: PluginLocalDevelopmentKeyValueStore(),
+            toolDiscovery: FixedNodeToolDiscovery(candidates: [projectNode, homebrewNode])
+        )
+        let projectNodeOnly = ProjectRuntimeService(
+            runtimeLocator: NodeEnvironmentTestRuntimeLocator(environment: ["PATH": "/usr/bin:/bin"]),
+            store: PluginLocalDevelopmentKeyValueStore(),
+            toolDiscovery: FixedNodeToolDiscovery(candidates: [projectNode])
+        )
+
+        #expect(withGlobalNode.languageToolProcessEnvironment()["LITHE_NODE_PATH"] == homebrewNode.executableURL.path)
+        #expect(projectNodeOnly.languageToolProcessEnvironment()["LITHE_NODE_PATH"] == nil)
+    }
+
+    @Test
+    @MainActor
     func explicitNodePathOverrideIsPreserved() {
         let service = ProjectRuntimeService(
             runtimeLocator: NodeEnvironmentTestRuntimeLocator(environment: [
@@ -253,19 +380,68 @@ private struct PluginTrustFixture {
     let packageURL: URL
     /// The test runner is not a signed app, so an ad-hoc bundle stands in
     /// for the host whose code signature the verifier inspects.
-    var hostBundleURL: URL { packageURL.appendingPathComponent("Feature.bundle") }
+    var hostBundleURL: URL { root.appendingPathComponent("host/Host.bundle") }
     let manifest: PluginManifest
     let privateKey: Curve25519.Signing.PrivateKey
+    let signatureRequirement: PluginSignatureRequirement
 
-    init() throws {
+    init(signatureRequirement: PluginSignatureRequirement = .publisherPackage) throws {
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("lithe-plugin-trust-\(UUID().uuidString)", isDirectory: true)
-        packageURL = root.appendingPathComponent("sources/dev.example.publisher", isDirectory: true)
         privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: 7, count: 32))
-        manifest = PluginManifest(
+        self.signatureRequirement = signatureRequirement
+        let version = PluginVersion(major: 0, minor: 3, patch: 0)
+        packageURL = root.appendingPathComponent("sources/\(version)", isDirectory: true)
+        manifest = Self.manifest(version: version, signatureRequirement: signatureRequirement)
+        do {
+            try Self.writeBundle(at: hostBundleURL, identifier: "dev.example.host")
+            try Self.writePackage(at: packageURL, manifest: manifest)
+        } catch {
+            remove()
+            throw error
+        }
+    }
+
+    /// Writes another version of the same plugin next to the primary package.
+    func makePackage(version: PluginVersion) throws -> (url: URL, manifest: PluginManifest) {
+        let url = root.appendingPathComponent("sources/\(version)", isDirectory: true)
+        let manifest = Self.manifest(version: version, signatureRequirement: signatureRequirement)
+        try Self.writePackage(at: url, manifest: manifest)
+        return (url, manifest)
+    }
+
+    func signPackage(keyID: String) throws {
+        try sign(packageAt: packageURL, manifest: manifest, keyID: keyID)
+    }
+
+    func sign(
+        packageAt url: URL,
+        manifest: PluginManifest,
+        keyID: String,
+        privateKey signingKey: Curve25519.Signing.PrivateKey? = nil
+    ) throws {
+        let document = try PluginPackageSignature.makeDocument(
+            packageAt: url,
+            pluginID: manifest.id.rawValue,
+            pluginVersion: manifest.version.description,
+            privateKey: signingKey ?? privateKey,
+            keyID: keyID
+        )
+        try PluginPackageSignature.write(document, to: url)
+    }
+
+    func remove() {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    private static func manifest(
+        version: PluginVersion,
+        signatureRequirement: PluginSignatureRequirement
+    ) -> PluginManifest {
+        PluginManifest(
             id: PluginID("dev.example.publisher"),
             displayName: "Example Publisher Plugin",
-            version: PluginVersion(major: 0, minor: 3, patch: 0),
+            version: version,
             hostCompatibility: PluginHostCompatibility(
                 minimum: PluginVersion(major: 0, minor: 3, patch: 0),
                 maximumExclusive: PluginVersion(major: 0, minor: 4, patch: 0)
@@ -273,7 +449,7 @@ private struct PluginTrustFixture {
             vendor: PluginVendor(
                 id: "dev.example",
                 displayName: "Example",
-                signatureRequirement: .publisherPackage
+                signatureRequirement: signatureRequirement
             ),
             entrypoint: PluginEntrypoint(
                 kind: .nativeBundle,
@@ -290,49 +466,35 @@ private struct PluginTrustFixture {
                 providedCapabilities: [ModuleCapabilityID("dev.example.publisher.capability")]
             ))]
         )
-        do {
-            try writePackage()
-        } catch {
-            remove()
-            throw error
-        }
     }
 
-    func signPackage(keyID: String) throws {
-        let document = try PluginPackageSignature.makeDocument(
-            packageAt: packageURL,
-            pluginID: manifest.id.rawValue,
-            pluginVersion: manifest.version.description,
-            privateKey: privateKey,
-            keyID: keyID
+    private static func writePackage(at packageURL: URL, manifest: PluginManifest) throws {
+        try writeBundle(
+            at: packageURL.appendingPathComponent("Feature.bundle"),
+            identifier: "dev.example.publisher.bundle"
         )
-        try PluginPackageSignature.write(document, to: packageURL)
-    }
-
-    func remove() {
-        try? FileManager.default.removeItem(at: root)
-    }
-
-    private func writePackage() throws {
-        let contents = packageURL.appendingPathComponent("Feature.bundle/Contents", isDirectory: true)
-        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
-        let infoPlist: [String: Any] = [
-            "CFBundleIdentifier": "dev.example.publisher.bundle",
-            "CFBundlePackageType": "BNDL"
-        ]
-        try PropertyListSerialization.data(fromPropertyList: infoPlist, format: .xml, options: 0)
-            .write(to: contents.appendingPathComponent("Info.plist"), options: .atomic)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(manifest).write(
             to: packageURL.appendingPathComponent("plugin.json"),
             options: .atomic
         )
-        // The verifier requires a valid code signature; an ad-hoc signature
-        // matches what development builds produce.
+    }
+
+    /// The verifier requires a valid code signature; an ad-hoc signature
+    /// matches what development builds produce.
+    private static func writeBundle(at bundleURL: URL, identifier: String) throws {
+        let contents = bundleURL.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        let infoPlist: [String: Any] = [
+            "CFBundleIdentifier": identifier,
+            "CFBundlePackageType": "BNDL"
+        ]
+        try PropertyListSerialization.data(fromPropertyList: infoPlist, format: .xml, options: 0)
+            .write(to: contents.appendingPathComponent("Info.plist"), options: .atomic)
         let result = MacProcessRunner().run(ProcessRequest(
             executablePath: "/usr/bin/codesign",
-            arguments: ["--force", "--sign", "-", packageURL.appendingPathComponent("Feature.bundle").path],
+            arguments: ["--force", "--sign", "-", bundleURL.path],
             timeoutMilliseconds: 10_000
         ))
         guard result.succeeded else {
@@ -373,11 +535,18 @@ private struct NodeEnvironmentTestRuntimeLocator: RuntimeLocator {
 }
 
 private struct FixedNodeToolDiscovery: RuntimeToolDiscovery {
-    let node: URL
+    let nodeCandidates: [RuntimeToolCandidate]
+
+    init(node: URL) {
+        nodeCandidates = [RuntimeToolCandidate(command: "node", executableURL: node, source: .environment, detail: nil)]
+    }
+
+    init(candidates: [RuntimeToolCandidate]) {
+        nodeCandidates = candidates
+    }
 
     func candidates(for command: String, projectURL: URL?, environment: [String: String]) -> [RuntimeToolCandidate] {
-        guard command == "node" else { return [] }
-        return [RuntimeToolCandidate(command: command, executableURL: node, source: .environment, detail: nil)]
+        command == "node" ? nodeCandidates : []
     }
 
     func guidance(for command: String, projectURL: URL?, environment: [String: String]) -> RuntimeToolGuidance {

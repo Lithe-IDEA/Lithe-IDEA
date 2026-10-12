@@ -470,6 +470,11 @@ public struct PluginInstallationRecord: Equatable, Codable, Sendable {
     public let activeVersion: PluginVersion
     public let previousVersion: PluginVersion?
     public let origin: PluginInstallationOrigin
+    /// Origin of `previousVersion`. Each installed version keeps its own trust
+    /// origin so a rollback verifies the restored package by how it was
+    /// installed. Records written before this field existed decode as `nil`
+    /// and fall back to `origin`.
+    public let previousOrigin: PluginInstallationOrigin?
     public let status: PluginInstallationStatus
 
     public init(
@@ -477,12 +482,14 @@ public struct PluginInstallationRecord: Equatable, Codable, Sendable {
         activeVersion: PluginVersion,
         previousVersion: PluginVersion? = nil,
         origin: PluginInstallationOrigin,
+        previousOrigin: PluginInstallationOrigin? = nil,
         status: PluginInstallationStatus = .installed
     ) {
         self.pluginID = pluginID
         self.activeVersion = activeVersion
         self.previousVersion = previousVersion
         self.origin = origin
+        self.previousOrigin = previousOrigin
         self.status = status
     }
 }

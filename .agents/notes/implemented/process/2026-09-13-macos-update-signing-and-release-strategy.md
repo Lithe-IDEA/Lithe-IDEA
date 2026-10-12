@@ -54,9 +54,21 @@ v1→v2 那次一样让旧包立刻失效。同一个 key ID 永远不能换成�
 
 1. 只有 debug 构建（`#if DEBUG`）接受这种来源；release 构建读到它会明确报
    “只有开发版能加载”，不会加载代码。
-2. 包里只要存在 `lithe-plugin-signature.json`，无论安装来源是什么都必须验签通过；
-   开发来源不能用来绕过一个坏掉的签名。
-3. 原生 bundle 的代码签名仍然必须有效（ad-hoc 签名即可）。
+2. 只有宿主信任策略要求发布签名（`publisherPackage`）的插件才可能是开发包。
+   按团队签名信任的插件（`sameTeamAsHost`，例如 Go Support）本来就不带签名文档，
+   从磁盘安装时保持普通来源，不会被误标成开发包、也不会因此被 release 拒绝。
+3. 包里只要存在 `lithe-plugin-signature.json`，无论安装来源和签名要求是什么都必须
+   验签通过；`sameTeamAsHost` 包验签后仍要做原有的团队检查。开发来源不能用来
+   绕过一个坏掉或伪造的签名。
+4. 原生 bundle 的代码签名仍然必须有效（ad-hoc 签名即可）。
+
+安装来源按**每个已安装版本**记录（`origin` 和 `previousOrigin`），回滚时用目标
+版本自己的来源验证。例如先装开发包 0.3.0、再装正式签名的 0.3.1，回滚到 0.3.0
+时按开发包规则验证，而不是误用 0.3.1 的“正式包”规则报缺少签名。
+
+当前信任表只包含 `lithe-official-plugins-v2`：v1 私钥已无法找回，用旧客户端安装的
+v1 包在新版本里仍会被拒绝，需要重新下载 v2 包。多 key 表是为以后的轮换准备的，
+并没有恢复 v1 兼容性。
 
 构建侧对应 `scripts/build-official-plugins.sh --development-unsigned`，只在 debug
 配置下可用，用来在没有私钥时产出这种开发包；release 配置传入该参数会直接失败。

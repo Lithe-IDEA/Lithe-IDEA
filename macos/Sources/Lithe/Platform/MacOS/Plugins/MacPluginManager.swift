@@ -150,9 +150,17 @@ final class MacPluginManager: PluginManaging {
 
     func installPackage(at packageURL: URL) throws {
         // Only development builds record an unsigned package from disk as a
-        // development package; release builds keep the signed-package path.
+        // development package, and only when its trust model requires a
+        // publisher signature; release builds keep the signed-package path.
+        let manifest = try JSONDecoder().decode(
+            PluginManifest.self,
+            from: Data(contentsOf: packageURL.appendingPathComponent("plugin.json"))
+        )
         let isDevelopmentPackage = allowsLocalDevelopmentPackages
-            && !MacOfficialPluginSignatureVerifier.hasPackageSignature(at: packageURL)
+            && MacOfficialPluginSignatureVerifier.isUnsignedDevelopmentPackage(
+                at: packageURL,
+                manifest: manifest
+            )
         let installed = try packageStore.installPackage(
             from: packageURL,
             deferActivationUntilRestart: true,

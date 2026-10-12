@@ -138,6 +138,7 @@ final class MacPluginPackageStore {
                     activeVersion: record.activeVersion,
                     previousVersion: record.previousVersion,
                     origin: record.origin,
+                    previousOrigin: record.previousOrigin,
                     status: .installed
                 ), to: pluginDirectory.appendingPathComponent("installation.json"))
             case .uninstallPending:
@@ -360,13 +361,17 @@ final class MacPluginPackageStore {
             throw error
         }
         do {
+            let replacesActiveVersion = existingRecord?.activeVersion == manifest.version
             let record = PluginInstallationRecord(
                 pluginID: manifest.id,
                 activeVersion: manifest.version,
-                previousVersion: existingRecord?.activeVersion == manifest.version
+                previousVersion: replacesActiveVersion
                     ? existingRecord?.previousVersion
                     : existingRecord?.activeVersion,
                 origin: origin,
+                previousOrigin: replacesActiveVersion
+                    ? existingRecord?.previousOrigin
+                    : existingRecord?.origin,
                 status: deferActivationUntilRestart ? .updateStaged : .installed
             )
             try write(record, to: pluginDirectory.appendingPathComponent("installation.json"))
@@ -407,7 +412,8 @@ final class MacPluginPackageStore {
             throw PluginPackageStoreError.manifestDoesNotMatchInstallation
         }
         try validateOfficialTrustPolicy(manifest)
-        try verifier.verify(packageAt: previousPackageURL, manifest: manifest, origin: record.origin)
+        let previousOrigin = record.previousOrigin ?? record.origin
+        try verifier.verify(packageAt: previousPackageURL, manifest: manifest, origin: previousOrigin)
         try MacPluginLanguageServerPackageValidator.validate(
             packageAt: previousPackageURL,
             pluginManifest: manifest,
@@ -417,7 +423,8 @@ final class MacPluginPackageStore {
             pluginID: pluginID,
             activeVersion: previousVersion,
             previousVersion: record.activeVersion,
-            origin: record.origin,
+            origin: previousOrigin,
+            previousOrigin: record.origin,
             status: deferActivationUntilRestart ? .updateStaged : .installed
         )
         try write(restored, to: pluginDirectory.appendingPathComponent("installation.json"))
@@ -461,6 +468,7 @@ final class MacPluginPackageStore {
             activeVersion: record.activeVersion,
             previousVersion: record.previousVersion,
             origin: record.origin,
+            previousOrigin: record.previousOrigin,
             status: .uninstallPending
         ), to: pluginDirectory.appendingPathComponent("installation.json"))
     }
@@ -477,6 +485,7 @@ final class MacPluginPackageStore {
             activeVersion: record.activeVersion,
             previousVersion: record.previousVersion,
             origin: record.origin,
+            previousOrigin: record.previousOrigin,
             status: .uninstallPending
         ), to: pluginDirectory.appendingPathComponent("installation.json"))
     }
@@ -567,6 +576,21 @@ struct MacOfficialPluginSignatureVerifier: PluginPackageSignatureVerifying {
         self.hostBundleURL = hostBundleURL
     }
 
+    /// The host's trust policy wins over the package's own declaration, so an
+    /// official plugin cannot downgrade the signature it must carry.
+    static func signatureRequirement(for manifest: PluginManifest) -> PluginSignatureRequirement {
+        OfficialPluginCatalog.manifests.first(where: { $0.id == manifest.id })?
+            .vendor.signatureRequirement ?? manifest.vendor.signatureRequirement
+    }
+
+    /// An unsigned package counts as a development package only when its
+    /// trust model calls for a publisher signature. Packages trusted through
+    /// the host's signing team never carry one and keep their normal origin.
+    static func isUnsignedDevelopmentPackage(at packageURL: URL, manifest: PluginManifest) -> Bool {
+        signatureRequirement(for: manifest) == .publisherPackage
+            && !hasPackageSignature(at: packageURL)
+    }
+
     static func hasPackageSignature(at packageURL: URL) -> Bool {
         FileManager.default.fileExists(
             atPath: packageURL.appendingPathComponent(PluginPackageSignature.signatureFileName).path
@@ -600,7 +624,8 @@ struct MacOfficialPluginSignatureVerifier: PluginPackageSignatureVerifying {
         }
         // A package that carries a publisher signature is always verified,
         // whatever origin it was installed with.
-        if origin == .localDevelopment, !Self.hasPackageSignature(at: packageURL) {
+        if origin == .localDevelopment,
+           Self.isUnsignedDevelopmentPackage(at: packageURL, manifest: manifest) {
             guard allowsLocalDevelopmentPackages else {
                 throw PluginPackageStoreError.developmentPackageNotAllowed(manifest.id)
             }
@@ -612,11 +637,14 @@ struct MacOfficialPluginSignatureVerifier: PluginPackageSignatureVerifying {
             return
         }
 
-        let signatureRequirement = OfficialPluginCatalog.manifests.first(where: {
-            $0.id == manifest.id
-        })?.vendor.signatureRequirement ?? manifest.vendor.signatureRequirement
-        if signatureRequirement == .publisherPackage {
+        // A signature document is verified whenever it is present, even for
+        // packages trusted through the signing team, so a forged or damaged
+        // document is never silently ignored.
+        let signatureRequirement = Self.signatureRequirement(for: manifest)
+        if signatureRequirement == .publisherPackage || Self.hasPackageSignature(at: packageURL) {
             try verifyPublisherPackageSignature(packageAt: packageURL, manifest: manifest)
+        }
+        if signatureRequirement == .publisherPackage {
             return
         }
         let pluginTeam = try teamIdentifier(for: pluginCode)

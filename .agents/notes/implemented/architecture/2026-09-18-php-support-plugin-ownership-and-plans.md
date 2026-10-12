@@ -16,7 +16,7 @@ PHP 支持由用户选择安装和启用，主程序不携带 PHP 插件包、No
 
 - `scripts/official-plugin-distribution.mjs` 显式列出随主程序分发的官方插件。PHP 不在其中；`build-official-plugins.sh --plugin-id dev.lithe.plugin.php-support` 仍能独立构建插件包，用户通过已有插件管理的 Install 入口安装签名与宿主一致的包。
 - macOS 的 PHP 语言服务和执行模块均默认禁用、按需激活。安装后的包提供 `.php`、`.phtml` 和 `composer.json` 声明；没有包时不注册它的进程能力。共享的轻量语法识别不需要下载或启动外部进程。
-- macOS 的 PHP 插件包携带由 `language-server.json` 固定版本和 SHA-256 的 Intelephense 包。插件管理页下载并校验插件包，运行时把 Intelephense 保存在同一个用户级插件版本目录中；重装、回滚和卸载都处理同一份目录。Node.js 仍是 Intelephense 的外部运行时，PHP、Composer 和项目 PHPUnit 仍由用户自行提供；本地目录导入只用于离线或故障恢复。从 Dock 或 Finder 打开的 Lithe 只继承 launchd 的精简 PATH，里面没有 Homebrew 或 nvm/volta/fnm 安装的 Node；因此宿主在启动语言服务器前用运行时工具发现找到 `node`，通过 `LITHE_NODE_PATH` 传给插件里的 launcher，用户已设置的 `LITHE_NODE_PATH` 优先。
+- macOS 的 PHP 插件包携带由 `language-server.json` 固定版本和 SHA-256 的 Intelephense 包。插件管理页下载并校验插件包，运行时把 Intelephense 保存在同一个用户级插件版本目录中；重装、回滚和卸载都处理同一份目录。Node.js 仍是 Intelephense 的外部运行时，PHP、Composer 和项目 PHPUnit 仍由用户自行提供；本地目录导入只用于离线或故障恢复。从 Dock 或 Finder 打开的 Lithe 只继承 launchd 的精简 PATH，里面没有 Homebrew 或 nvm/volta/fnm 安装的 Node；因此宿主在启动语言服务器前用运行时工具发现找到 `node`，通过 `LITHE_NODE_PATH` 传给插件里的 launcher，用户已设置的 `LITHE_NODE_PATH` 优先。语言服务器会在打开文件时自动启动，因此这里绝不选用项目目录里的 `node`（如 `.lithe/bin/node`），只用全局安装的 Node，避免打开不可信项目就执行项目自带的程序。
 - macOS 下载地址使用宿主 App 的 `CFBundleShortVersionString` 组成 Release tag 和 zip 文件名；`BuiltInPluginCatalog.hostVersion` 只用于插件 API 兼容性校验，不能用来定位发布资产。
 - Windows 的配置、Composer/PHPUnit 解析和入口位于 `Plugins/win/Official/PhpSupport`，通过独立 `.lithe-extension` 包分发。宿主不能静态或动态 import 这份实现；只有轻量的语言到包 ID 对应表保留在宿主。插件管理的“导入插件包”入口安装后默认禁用，用户再选择启用。
 - Windows 显式安装 PHP 扩展时才下载解析器，并使用用户的 Bun 安装 Intelephense；同时检查 Node.js，因为安装包管理器与语言服务器运行时不是同一概念。缺失时给出安装引导，不后台下载运行时。

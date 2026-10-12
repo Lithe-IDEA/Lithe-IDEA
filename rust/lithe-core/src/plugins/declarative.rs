@@ -540,9 +540,11 @@ impl DeclarativePluginManifest {
     }
 
     /// Every program the host may start on this plugin's behalf, in a stable
-    /// order. Run/test command arguments are templates filled from the user's
-    /// own files, so only their executables identify the program; language
-    /// server arguments are fixed and are part of its identity.
+    /// order. Each entry carries everything that decides what actually runs:
+    /// the executable plus its arguments, the language server's validation
+    /// probe, and the run/test argument templates. An update that changes any
+    /// of these, even with the same executable, is a new program and must be
+    /// approved again.
     pub(crate) fn programs(&self) -> Vec<Value> {
         let mut programs = Vec::new();
         for server in &self.language_servers {
@@ -552,12 +554,14 @@ impl DeclarativePluginManifest {
                     "languageID": server.language_id,
                     "path": path,
                     "arguments": server.arguments,
+                    "validationArguments": server.validation_arguments,
                 }),
                 LanguageServerLaunch::SystemCommand { commands } => json!({
                     "kind": "systemLanguageServer",
                     "languageID": server.language_id,
                     "commands": commands,
                     "arguments": server.arguments,
+                    "validationArguments": server.validation_arguments,
                 }),
             });
             for dependency in &server.runtime_dependencies {
@@ -570,6 +574,7 @@ impl DeclarativePluginManifest {
                     "kind": "run",
                     "languageID": provider.language_id,
                     "executable": run.executable,
+                    "arguments": run.arguments,
                 }));
             }
             if let Some(test) = &provider.test {
@@ -577,6 +582,9 @@ impl DeclarativePluginManifest {
                     "kind": "test",
                     "languageID": provider.language_id,
                     "executable": test.executable,
+                    "workspaceArguments": test.workspace_arguments,
+                    "fileArguments": test.file_arguments,
+                    "testCaseArguments": test.test_case_arguments,
                 }));
             }
         }

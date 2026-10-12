@@ -264,6 +264,62 @@ struct PluginMarketplaceServiceTests {
         #expect(zig.description(for: Locale(identifier: "fr")) == zig.description)
     }
 
+    /// The catalog describes what Install would install: Core skips PHP
+    /// 1.1.0 (plugin API 2) and offers 1.0.0, so 1.0.0's facts are shown.
+    @Test
+    func catalogShowsTheInstallableVersionRatherThanTheNewest() throws {
+        let index = try PluginMarketplaceTestSupport.evaluator.validateIndex(
+            Data(contentsOf: DeclarativePluginTestSupport.repositoryRoot
+                .appendingPathComponent("shared/contracts/plugins/v1/fixtures/marketplace/index.json")),
+            sourceKind: .official,
+            platform: "darwin-arm64"
+        )
+        let php = try #require(index.plugins.first { $0.id == "dev.lithe.fixture.php-support" })
+        #expect(php.latestVersion == "1.1.0")
+        #expect(php.availability.download?.version == "1.0.0")
+        #expect(php.installableVersion?.version == "1.0.0")
+        #expect(php.presentedVersion.version == "1.0.0")
+        #expect(php.presentedVersion.releaseDate == php.availability.download?.releaseDate)
+
+        // Nothing installable: the newest version is shown with the reason.
+        let future = try #require(index.plugins.first { $0.id == "io.example.future-tools" })
+        #expect(future.installableVersion == nil)
+        #expect(future.presentedVersion.version == "3.0.0")
+    }
+
+    /// The approval covers what actually runs, not just which executable:
+    /// an update that keeps `php` but changes its arguments, after the
+    /// approval went through the installation record, must ask again.
+    @Test
+    func changedRunArgumentsNeedApprovalAgainAfterStorage() throws {
+        let fixtures = DeclarativePluginTestSupport.repositoryRoot
+            .appendingPathComponent("shared/contracts/plugins/v1/fixtures")
+        let original = try Data(contentsOf: fixtures.appendingPathComponent("php-support.plugin.json"))
+        var manifest = try #require(JSONSerialization.jsonObject(with: original) as? [String: Any])
+        var providers = try #require(manifest["executionProviders"] as? [[String: Any]])
+        var run = try #require(providers[0]["run"] as? [String: Any])
+        run["arguments"] = ["-r", "${userArguments}"]
+        providers[0]["run"] = run
+        manifest["executionProviders"] = providers
+        let updated = try JSONSerialization.data(withJSONObject: manifest)
+
+        let evaluator = PluginMarketplaceTestSupport.evaluator
+        let first = try evaluator.installReview(
+            manifest: original, expectedID: nil, expectedVersion: nil, approvedPrograms: nil
+        )
+        let stored = try first.programs.map { try PluginProgram(canonicalJSON: $0.canonicalJSON()) }
+        let unchanged = try evaluator.installReview(
+            manifest: original, expectedID: nil, expectedVersion: nil, approvedPrograms: stored
+        )
+        #expect(unchanged.newPrograms.isEmpty)
+
+        let update = try evaluator.installReview(
+            manifest: updated, expectedID: nil, expectedVersion: nil, approvedPrograms: stored
+        )
+        #expect(update.newPrograms.map(\.kind) == [.run])
+        #expect(update.newPrograms.first?.argumentTemplate("arguments") == ["-r", "${userArguments}"])
+    }
+
     @Test
     func sourceResolutionUsesCoreRules() throws {
         let resolution = try PluginMarketplaceTestSupport.evaluator.resolveSource(" https://github.com/example/plugins ")

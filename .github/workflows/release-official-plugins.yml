@@ -1,6 +1,8 @@
 # Releases each official downloadable plugin through its own tag series
-# (`plugin-<name>-v<version>`), independent of Lithe app releases, and opens a
-# pull request that lists the new archive in Plugins/marketplace/index.json.
+# (`plugin-<name>-v<version>`), independent of Lithe app releases. Listing a
+# release in Plugins/marketplace/index.json is a separate, idempotent job: it
+# lists every tagged version the index is missing, so a run whose index pull
+# request failed after the release was published recovers on the next run.
 # A plugin is only released when its package directory changed and its
 # plugin.json declares a version without a tag; pull requests that change a
 # released plugin without bumping its version fail the check job.
@@ -121,23 +123,63 @@ jobs:
             --title "$PLUGIN_ID $VERSION" \
             --notes "Official Lithe plugin $PLUGIN_ID $VERSION. SHA-256: $(cat "dist/$ASSET_NAME.sha256")"
 
-      - name: Open a pull request listing the release
+  sync-index:
+    name: List released plugins in the official index
+    needs: [plan, release]
+    # Runs after releases (even when one of them failed, since only tagged
+    # versions are listed), after a skipped release, and on manual reruns, so
+    # a listing that failed earlier is retried.
+    if: >-
+      !cancelled()
+      && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/preview'
+      && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Check out source with tags
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Open index pull requests for unlisted releases
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ matrix.release.tag }}
-          ASSET_NAME: ${{ matrix.release.assetName }}
-          PLUGIN_ID: ${{ matrix.release.id }}
-          VERSION: ${{ matrix.release.version }}
         run: |
-          branch="automation/plugin-index-$TAG"
-          git switch -c "$branch"
-          node scripts/official-plugin-releases.mjs update-index \
-            "$PLUGIN_ID" "$VERSION" "$(cat "dist/$ASSET_NAME.sha256")" "$(date -u +%F)"
+          set -euo pipefail
+          # Tags created by the release job are not in this checkout yet.
+          git fetch --force --tags origin
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Plugins/marketplace/index.json
-          git commit -m "chore(plugins): 将 $PLUGIN_ID $VERSION 加入官方插件索引"
-          git push origin "$branch"
-          gh pr create --base preview --head "$branch" \
-            --title "chore(plugins): 官方插件索引加入 $PLUGIN_ID $VERSION" \
-            --body "插件发布流程已发布 \`$TAG\`（资产 \`$ASSET_NAME\`）。本 PR 只把该版本的下载地址和 SHA-256 写入 \`Plugins/marketplace/index.json\`，合并后用户在插件市场刷新即可看到新版本。"
+          pending=$(node scripts/official-plugin-releases.mjs pending-index)
+          echo "Pending: $pending"
+          echo "$pending" | jq -c '.[]' | while read -r release; do
+            id=$(jq -r .id <<<"$release")
+            version=$(jq -r .version <<<"$release")
+            tag=$(jq -r .tag <<<"$release")
+            asset=$(jq -r .assetName <<<"$release")
+            branch="automation/plugin-index-$tag"
+            if [ "$(gh pr list --head "$branch" --state open --json number --jq length)" != "0" ]; then
+              echo "$tag already has an open index pull request"
+              continue
+            fi
+            # The checksum comes from the asset users will download, not from
+            # a local build, so a rerun lists exactly what was published.
+            rm -rf dist && mkdir -p dist
+            gh release download "$tag" --pattern "$asset" --dir dist
+            sha=$(sha256sum "dist/$asset" | cut -d' ' -f1)
+            released=$(gh release view "$tag" --json publishedAt --jq '.publishedAt[0:10]')
+            git switch --force-create "$branch" origin/preview
+            node scripts/official-plugin-releases.mjs update-index "$id" "$version" "$sha" "$released"
+            git add Plugins/marketplace/index.json
+            git commit -m "chore(plugins): 将 $id $version 加入官方插件索引"
+            git push --force origin "$branch"
+            gh pr create --base preview --head "$branch" \
+              --title "chore(plugins): 官方插件索引加入 $id $version" \
+              --body "插件发布流程已发布 \`$tag\`（资产 \`$asset\`，SHA-256 \`$sha\`）。本 PR 只把该版本的下载地址和 SHA-256 写入 \`Plugins/marketplace/index.json\`，合并后用户在插件市场刷新即可看到新版本。"
+          done

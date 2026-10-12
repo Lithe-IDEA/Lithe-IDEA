@@ -33,12 +33,18 @@ Lithe 的插件管理改成和 IntelliJ IDEA 一样的“插件市场 / 已安�
 - 官方源只接受 `publisherPackage` 签名包；第三方源只接受 `signatureRequirement: "none"` 的包。Rust 拒绝官方命名空间声明 `none`。
 - 社区插件安装顺序：下载 → 校验 SHA-256（不匹配就不解压）→ 声明式校验 → 弹窗列出权限、要运行的程序和来源仓库 → 用户确认后安装。
 - 安装时把内容摘要（包内每个文件的 SHA-256 汇总）、来源和已确认的程序写进安装记录。之后每次扫描都重新计算摘要，文件被改动就拒绝加载。这是未签名包唯一的完整性证明。
-- 更新时如果新增了要运行的程序，必须重新确认。
+- 更新时如果新增了要运行的程序，必须重新确认。“程序”按实际执行内容比较，不只看可执行文件：语言服务器的启动参数和验证探测参数、运行和测试的参数模板都算在内。比如旧版运行 `node runner.js`、新版改成 `node -e …`，可执行文件都是 `node`，也必须重新确认；只看可执行文件就会让插件在用户不知情时改变行为。
 - 同一插件出现在多个源时由用户选源；更新只走安装时记录的源，防止别的源用同名插件“劫持”更新。
+
+**资源上限。** SHA-256 只能证明下载物就是索引写的那个文件，第三方索引照样可以指向一个 ZIP 炸弹（压缩包很小、解压后极大）。所以下载时边收边计数，超过 512 MB 立即中止，不先落盘；解压前先读 ZIP 中央目录，检查声明的展开总大小（2 GB）和文件数（5 万）；解压过程中再定时实测已写出的大小和文件数，超限就终止 `ditto`。第二道实测不能省：`ditto` 按压缩数据解压，不理会中央目录里谎报的大小。
 
 **存储。** 源列表写在 Application Support，索引缓存写在 Caches，下载和解压使用临时目录。app bundle 里只读地附带一份官方索引，作为离线和首次启动时的兜底，运行时从不写回 bundle。
 
-**官方插件发布。** `Plugins/marketplace/official-plugins.json` 登记每个官方插件的标签前缀、包目录和资产名。`release-official-plugins.yml` 在 PR 上检查“插件内容变了但版本没升”，合入 preview 后只为版本有变化的插件新建 `plugin-<名称>-v<版本>` 标签和 Release，再自动开 PR 更新索引。插件代码不变，它的标签就不动。
+**官方插件发布。** `Plugins/marketplace/official-plugins.json` 登记每个官方插件的标签前缀、包目录和资产名。`release-official-plugins.yml` 在 PR 上检查“插件内容变了但版本没升”，合入 preview 后只为版本有变化的插件新建 `plugin-<名称>-v<版本>` 标签和 Release。插件代码不变，它的标签就不动。
+
+“发布”和“登记到索引”是两个独立的 job。登记 job 每次运行都重新找出“已打标签、但索引里没有”的版本（扫描整个标签系列），从已发布的 Release 下载资产计算 SHA-256，再开索引 PR；已有打开的索引 PR 就跳过。这样即使 Release 发出去后开 PR 失败，重跑工作流也能补上。如果像以前那样只在“标签不存在”时才处理，Release 一旦发出就再也不会被登记。
+
+**展示的版本。** Core 会跳过当前平台或插件 API 不满足的新版本，选择能安装的旧版本。详情里的版本、发布日期和支持平台都描述“点安装会装的那个版本”；最新版本不同时，单独一行注明它在当前 Lithe 或这台 Mac 上无法使用。
 
 正确做法：新增官方插件时登记到 `official-plugins.json`，改插件内容时同时升 `plugin.json` 的版本。
 
@@ -63,8 +69,8 @@ Lithe 的插件管理改成和 IntelliJ IDEA 一样的“插件市场 / 已安�
 
 - `cargo test --manifest-path rust/lithe-core/Cargo.toml --lib marketplace_plugins`：索引校验、平台与 API 判断、命名空间、源地址解析、安装审查的标准答案。
 - `./scripts/verify-shared-contracts.sh`：市场 fixture 与错误码登记。
-- `node --test scripts/official-plugin-releases.test.mjs`：只为版本变化的插件生成标签，内容变化未升版本时失败。
-- `./.agents/skills/write-stable-tests/scripts/test-stability-macos.sh -- --filter 'PluginMarketplace|MacPluginPackageDownloader|PluginManagementPresentation|PluginManager|PluginPackageStore'`：校验和先于解压、源与签名的信任匹配、内容摘要复查、更新只走记录的源、新增程序重新确认。
+- `node --test scripts/official-plugin-releases.test.mjs`：只为版本变化的插件生成标签，内容变化未升版本时失败；已发布未登记的版本会被重新登记。
+- `./.agents/skills/write-stable-tests/scripts/test-stability-macos.sh -- --filter 'PluginMarketplace|MacPluginPackageDownloader|PluginManagementPresentation|PluginManager|PluginPackageStore'`：校验和先于解压、下载中途超限即止、解压前后的大小和文件数上限、源与签名的信任匹配、内容摘要复查、更新只走记录的源、新增程序重新确认。
 - `./scripts/verify-runtime-bundle-immutability.sh`：刷新索引和安装插件不改写 app bundle。
 
 ## 适用范围

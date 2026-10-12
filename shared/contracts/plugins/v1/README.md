@@ -235,14 +235,17 @@ the plugin, sorted by `kind`, language, and tool:
 
 | `kind` | Fields | Meaning |
 | --- | --- | --- |
-| `packagedLanguageServer` | `languageID`, `path`, `arguments` | Executable inside the package |
-| `systemLanguageServer` | `languageID`, `commands`, `arguments` | Command resolved by host tool discovery |
+| `packagedLanguageServer` | `languageID`, `path`, `arguments`, `validationArguments` | Executable inside the package, with its launch arguments and validation probe |
+| `systemLanguageServer` | `languageID`, `commands`, `arguments`, `validationArguments` | Command resolved by host tool discovery |
 | `runtime` | `tool` | Runtime the host discovers and passes to a language server |
-| `run`, `test` | `languageID`, `executable` | Run/test command executable; arguments are templates over the user's files |
+| `run` | `languageID`, `executable`, `arguments` | Run command and its argument template |
+| `test` | `languageID`, `executable`, `workspaceArguments`, `fileArguments`, `testCaseArguments` | Test command and its argument templates |
 
-Hosts record the approved `programs` with the installation. An update passes
-them as `approvedPrograms`; a non-empty `newPrograms` requires the user to
-confirm again. When several sources list the same ID, the user chooses the
+Each entry carries everything that decides what actually runs, so an update
+that keeps the same executable but changes its arguments, argument templates,
+or validation probe is a new program. Hosts record the approved `programs`
+with the installation. An update passes them as `approvedPrograms`; a
+non-empty `newPrograms` requires the user to confirm again. When several sources list the same ID, the user chooses the
 source at install time and later updates come only from that source.
 
 ## Outcomes and error codes

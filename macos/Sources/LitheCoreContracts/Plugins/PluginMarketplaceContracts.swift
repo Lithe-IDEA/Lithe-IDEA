@@ -43,6 +43,13 @@ public struct PluginMarketplaceEntry: Equatable, Codable, Sendable, Identifiable
         public let pluginAPIVersion: Int
         public let releaseDate: String
         public let platforms: [String]
+
+        public init(version: String, pluginAPIVersion: Int, releaseDate: String, platforms: [String]) {
+            self.version = version
+            self.pluginAPIVersion = pluginAPIVersion
+            self.releaseDate = releaseDate
+            self.platforms = platforms
+        }
     }
 
     public let id: String
@@ -95,6 +102,31 @@ public struct PluginMarketplaceEntry: Equatable, Codable, Sendable, Identifiable
         self.latestReleaseDate = latestReleaseDate
         self.availability = availability
         self.versions = versions
+    }
+
+    /// The version this host would install. Core may skip newer versions
+    /// whose platform or plugin API does not fit, so this can be older than
+    /// `latestVersion`; nil when nothing fits.
+    public var installableVersion: Version? {
+        guard let download = availability.download else { return nil }
+        return versions.first { $0.version == download.version }
+            ?? Version(
+                version: download.version,
+                pluginAPIVersion: download.pluginAPIVersion,
+                releaseDate: download.releaseDate,
+                platforms: platforms
+            )
+    }
+
+    /// What the catalog shows: the installable version, or the newest one
+    /// when none can be installed (with the reason shown alongside).
+    public var presentedVersion: Version {
+        installableVersion ?? versions.first ?? Version(
+            version: latestVersion,
+            pluginAPIVersion: 0,
+            releaseDate: latestReleaseDate,
+            platforms: platforms
+        )
     }
 
     /// The description in `locale`'s language, matched the way the system
@@ -237,6 +269,23 @@ public struct PluginProgram: Equatable, Hashable, Sendable {
         if case .string(let command)? = executable["command"] { return command }
         if case .string(let toolchain)? = executable["toolchain"] { return toolchain }
         return nil
+    }
+
+    /// Fixed arguments of the language server's validation probe.
+    public var validationArguments: [String] { strings("validationArguments") }
+
+    /// Argument template of a run/test program (`arguments`,
+    /// `workspaceArguments`, `fileArguments`, `testCaseArguments`), with
+    /// conditional elements shown by their value.
+    public func argumentTemplate(_ key: String) -> [String] {
+        guard case .object(let fields) = json, case .array(let values)? = fields[key] else { return [] }
+        return values.compactMap { value in
+            switch value {
+            case .string(let string): string
+            case .object(let element): if case .string(let string)? = element["value"] { string } else { nil }
+            default: nil
+            }
+        }
     }
 
     /// Stable serialized form stored in the installation record.

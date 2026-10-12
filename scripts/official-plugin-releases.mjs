@@ -6,6 +6,9 @@
 // .agents/notes/implemented/feature/2026-10-12-plugin-marketplace.md.
 //
 //   plan                       JSON list of plugins whose version is untagged
+//   pending-index              JSON list of tagged versions missing from
+//                              index.json; publishing and listing are separate
+//                              steps, so a failed listing is retried from here
 //   check                      fail when a tagged version's directory changed
 //   update-index <id> <version> <sha256> <releaseDate>
 //                              add the released archive to the official index
@@ -35,6 +38,11 @@ function tagExists(tag) {
   } catch {
     return false;
   }
+}
+
+function tagsWithPrefix(prefix) {
+  const output = git(["tag", "--list", `${prefix}*`]);
+  return output ? output.split("\n") : [];
 }
 
 function directoryChangedSince(tag, directory) {
@@ -67,6 +75,33 @@ export function releaseFor(plugin, readManifest = (dir) => JSON.parse(readFileSy
 /** Plugins whose current version has no tag yet. */
 export function plan(plugins = loadConfig(), exists = tagExists) {
   return plugins.map((plugin) => releaseFor(plugin)).filter((release) => !exists(release.tag));
+}
+
+/** Released (tagged) versions that the official index does not list yet.
+ *  Every tag of each series is considered, so a version whose listing
+ *  failed is still picked up after the plugin has moved on. */
+export function pendingIndex(plugins = loadConfig(), index = readIndex(), tags = tagsWithPrefix) {
+  const pending = [];
+  for (const plugin of plugins) {
+    const listed = new Set(
+      (index.plugins.find((entry) => entry.id === plugin.id)?.versions ?? []).map((entry) => entry.version),
+    );
+    for (const tag of tags(plugin.tagPrefix)) {
+      const version = tag.slice(plugin.tagPrefix.length);
+      if (!/^\d+\.\d+\.\d+$/.test(version) || listed.has(version)) continue;
+      pending.push({
+        id: plugin.id,
+        version,
+        tag,
+        assetName: plugin.assetName.replace("{version}", version),
+      });
+    }
+  }
+  return pending;
+}
+
+function readIndex() {
+  return JSON.parse(readFileSync(indexPath, "utf8"));
 }
 
 /** Changing a released plugin without a new version would ship two
@@ -116,6 +151,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const [command, ...args] = process.argv.slice(2);
   if (command === "plan") {
     process.stdout.write(`${JSON.stringify(plan())}\n`);
+  } else if (command === "pending-index") {
+    process.stdout.write(`${JSON.stringify(pendingIndex())}\n`);
   } else if (command === "check") {
     const problems = check();
     for (const problem of problems) console.error(problem);
@@ -124,10 +161,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const [id, version, sha256, releaseDate] = args;
     const plugin = loadConfig().find((entry) => entry.id === id);
     if (!plugin) throw new Error(`${id} is not an official released plugin`);
-    const index = JSON.parse(readFileSync(indexPath, "utf8"));
+    const index = readIndex();
     writeFileSync(indexPath, `${JSON.stringify(updateIndex(index, plugin, { version, sha256, releaseDate }), null, 2)}\n`);
   } else {
-    console.error("Usage: official-plugin-releases.mjs plan | check | update-index <id> <version> <sha256> <YYYY-MM-DD>");
+    console.error("Usage: official-plugin-releases.mjs plan | pending-index | check | update-index <id> <version> <sha256> <YYYY-MM-DD>");
     process.exitCode = 2;
   }
 }

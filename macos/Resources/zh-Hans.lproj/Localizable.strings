@@ -2827,3 +2827,9 @@
 "Installed from %@" = "安装自 %@";
 "Community plugin maintained by a third party. Report plugin problems in its own repository." = "社区插件由第三方维护，插件问题请到它自己的仓库反馈。";
 "Install Plugin from Disk" = "从磁盘安装插件";
+"Check: %@" = "检查：%@";
+"All tests: %@" = "全部测试：%@";
+"One file: %@" = "单个文件：%@";
+"One test: %@" = "单个测试：%@";
+"Latest Version" = "最新版本";
+"%@ (not available for this Lithe or Mac)" = "%@（当前 Lithe 或这台 Mac 无法使用）";

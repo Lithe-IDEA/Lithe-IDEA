@@ -126,7 +126,7 @@ struct PluginMarketplaceView: View {
                 Text(verbatim: offer?.entry.name ?? listing.pluginID.rawValue)
                     .font(LitheTheme.uiFont(size: 13, weight: .semibold))
                     .lineLimit(1)
-                Text(verbatim: offer.map { "\($0.entry.author) · \($0.entry.latestVersion)" } ?? "")
+                Text(verbatim: offer.map { "\($0.entry.author) · \($0.entry.presentedVersion.version)" } ?? "")
                     .font(LitheTheme.smallFont)
                     .foregroundStyle(LitheTheme.secondaryText)
                     .lineLimit(1)
@@ -326,11 +326,24 @@ private struct PluginMarketplaceDetail: View {
                     Text(verbatim: PluginMarketplacePresentation.sourceName(offer.source, locale: locale))
                 }
             }
-            metadataRow("Version") { Text(verbatim: entry.latestVersion) }
-            metadataRow("Release Date") { Text(verbatim: entry.latestReleaseDate) }
+            // Version facts describe what Install would actually install;
+            // a newer release this Mac cannot use is named separately.
+            let shown = entry.presentedVersion
+            metadataRow("Version") { Text(verbatim: shown.version) }
+            if entry.installableVersion != nil, entry.latestVersion != shown.version {
+                metadataRow("Latest Version") {
+                    Text(String(
+                        format: PluginMarketplacePresentation.localized("%@ (not available for this Lithe or Mac)", locale: locale),
+                        entry.latestVersion
+                    ))
+                    .foregroundStyle(LitheTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            metadataRow("Release Date") { Text(verbatim: shown.releaseDate) }
             metadataRow("License") { Text(verbatim: entry.license) }
             metadataRow("Platforms") {
-                Text(verbatim: entry.platforms.map(PluginMarketplacePresentation.platformName).joined(separator: ", "))
+                Text(verbatim: shown.platforms.map(PluginMarketplacePresentation.platformName).joined(separator: ", "))
             }
             stateMessage
         }
@@ -547,36 +560,55 @@ enum PluginMarketplacePresentation {
         }
     }
 
+    /// Title and the exact command lines a program runs. Every argument the
+    /// approval covers is shown, so a changed template is visible when an
+    /// update asks for approval again.
     static func programDescription(_ program: PluginProgram, locale: Locale) -> (title: String, detail: String) {
         let language = program.languageID ?? ""
+        func line(_ parts: [String]) -> String { parts.filter { !$0.isEmpty }.joined(separator: " ") }
+        func labeled(_ key: String, _ parts: [String]) -> String {
+            String(format: localized(key, locale: locale), line(parts))
+        }
+        func serverDetail(_ command: [String]) -> String {
+            var lines = [line(command + program.arguments)]
+            if !program.validationArguments.isEmpty {
+                lines.append(labeled("Check: %@", [command.first ?? ""] + program.validationArguments))
+            }
+            return lines.joined(separator: "\n")
+        }
+        let executable = program.executable ?? ""
         switch program.kind {
         case .packagedLanguageServer:
             return (
-                String(format: PluginMarketplacePresentation.localized("%@ language server (inside the plugin)", locale: locale), language),
-                ([program.path ?? ""] + program.arguments).joined(separator: " ")
+                String(format: localized("%@ language server (inside the plugin)", locale: locale), language),
+                serverDetail([program.path ?? ""])
             )
         case .systemLanguageServer:
             return (
-                String(format: PluginMarketplacePresentation.localized("%@ language server (installed on this Mac)", locale: locale), language),
-                (program.commands + program.arguments).joined(separator: " ")
+                String(format: localized("%@ language server (installed on this Mac)", locale: locale), language),
+                serverDetail([program.commands.joined(separator: " | ")])
             )
         case .runtime:
             return (
-                PluginMarketplacePresentation.localized("Runtime used by the language server (installed on this Mac)", locale: locale),
+                localized("Runtime used by the language server (installed on this Mac)", locale: locale),
                 program.tool ?? ""
             )
         case .run:
             return (
-                String(format: PluginMarketplacePresentation.localized("Runs %@ files", locale: locale), language),
-                program.executable ?? ""
+                String(format: localized("Runs %@ files", locale: locale), language),
+                line([executable] + program.argumentTemplate("arguments"))
             )
         case .test:
             return (
-                String(format: PluginMarketplacePresentation.localized("Runs %@ tests", locale: locale), language),
-                program.executable ?? ""
+                String(format: localized("Runs %@ tests", locale: locale), language),
+                [
+                    labeled("All tests: %@", [executable] + program.argumentTemplate("workspaceArguments")),
+                    labeled("One file: %@", [executable] + program.argumentTemplate("fileArguments")),
+                    labeled("One test: %@", [executable] + program.argumentTemplate("testCaseArguments")),
+                ].joined(separator: "\n")
             )
         case .unknown:
-            return (PluginMarketplacePresentation.localized("Program", locale: locale), (try? program.canonicalJSON()) ?? "")
+            return (localized("Program", locale: locale), (try? program.canonicalJSON()) ?? "")
         }
     }
 }
@@ -637,6 +669,7 @@ struct PluginInstallConfirmationSheet: View {
                         Text(verbatim: description.detail)
                             .font(LitheTheme.uiFont(size: 11, design: .monospaced))
                             .foregroundStyle(LitheTheme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
                     }
                 }

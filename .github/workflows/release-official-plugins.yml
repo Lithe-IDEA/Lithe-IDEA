@@ -1,0 +1,143 @@
+# Releases each official downloadable plugin through its own tag series
+# (`plugin-<name>-v<version>`), independent of Lithe app releases, and opens a
+# pull request that lists the new archive in Plugins/marketplace/index.json.
+# A plugin is only released when its package directory changed and its
+# plugin.json declares a version without a tag; pull requests that change a
+# released plugin without bumping its version fail the check job.
+name: Release Official Plugins
+
+on:
+  pull_request:
+    paths:
+      - "Plugins/mac/Official/**"
+      - "Plugins/marketplace/**"
+      - "scripts/official-plugin-releases.mjs"
+  push:
+    branches:
+      - preview
+    paths:
+      - "Plugins/mac/Official/**"
+      - "Plugins/marketplace/official-plugins.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-official-plugins-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan plugin releases
+    runs-on: ubuntu-latest
+    outputs:
+      releases: ${{ steps.plan.outputs.releases }}
+
+    steps:
+      - name: Check out source with tags
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Test release planning
+        run: node --test scripts/official-plugin-releases.test.mjs
+
+      - name: Require a new version for changed plugins
+        run: node scripts/official-plugin-releases.mjs check
+
+      - name: Plan untagged plugin versions
+        id: plan
+        run: echo "releases=$(node scripts/official-plugin-releases.mjs plan)" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Release ${{ matrix.release.tag }}
+    needs: plan
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/preview' && needs.plan.outputs.releases != '[]'
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        release: ${{ fromJSON(needs.plan.outputs.releases) }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Swift 6.3.3 and Xcode
+        uses: ./.github/actions/setup-macos-toolchain
+
+      - name: Build and sign the plugin package
+        env:
+          LITHE_PLUGIN_PACKAGE_PRIVATE_KEY: ${{ secrets.LITHE_PLUGIN_PACKAGE_PRIVATE_KEY }}
+          PLUGIN_ID: ${{ matrix.release.id }}
+          ASSET_NAME: ${{ matrix.release.assetName }}
+        run: |
+          test -n "$LITHE_PLUGIN_PACKAGE_PRIVATE_KEY" || { echo "Configure LITHE_PLUGIN_PACKAGE_PRIVATE_KEY before releasing plugins"; exit 1; }
+          # Declarative packages contain no native code, so one archive serves
+          # every macOS architecture listed in official-plugins.json.
+          plugin_root=$(scripts/build-official-plugins.sh \
+            --configuration release \
+            --triple arm64-apple-macosx \
+            --plugin-id "$PLUGIN_ID" \
+            --output dist/official-plugins)
+          ditto -c -k --sequesterRsrc --keepParent "$plugin_root/$PLUGIN_ID" "dist/$ASSET_NAME"
+          shasum -a 256 "dist/$ASSET_NAME" | cut -d' ' -f1 > "dist/$ASSET_NAME.sha256"
+
+      - name: Verify the archived package
+        env:
+          PLUGIN_ID: ${{ matrix.release.id }}
+          VERSION: ${{ matrix.release.version }}
+          ASSET_NAME: ${{ matrix.release.assetName }}
+        run: |
+          # The build script already verified the publisher signature; check
+          # that the archive users download holds exactly that package.
+          mkdir -p dist/verify
+          ditto -x -k "dist/$ASSET_NAME" dist/verify
+          manifest="dist/verify/$PLUGIN_ID/plugin.json"
+          test "$(plutil -extract id raw "$manifest")" = "$PLUGIN_ID"
+          test "$(plutil -extract version raw "$manifest")" = "$VERSION"
+          test -f "dist/verify/$PLUGIN_ID/lithe-plugin-signature.json"
+
+      - name: Publish the plugin release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ matrix.release.tag }}
+          ASSET_NAME: ${{ matrix.release.assetName }}
+          PLUGIN_ID: ${{ matrix.release.id }}
+          VERSION: ${{ matrix.release.version }}
+        run: |
+          gh release create "$TAG" "dist/$ASSET_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "$PLUGIN_ID $VERSION" \
+            --notes "Official Lithe plugin $PLUGIN_ID $VERSION. SHA-256: $(cat "dist/$ASSET_NAME.sha256")"
+
+      - name: Open a pull request listing the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ matrix.release.tag }}
+          ASSET_NAME: ${{ matrix.release.assetName }}
+          PLUGIN_ID: ${{ matrix.release.id }}
+          VERSION: ${{ matrix.release.version }}
+        run: |
+          branch="automation/plugin-index-$TAG"
+          git switch -c "$branch"
+          node scripts/official-plugin-releases.mjs update-index \
+            "$PLUGIN_ID" "$VERSION" "$(cat "dist/$ASSET_NAME.sha256")" "$(date -u +%F)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Plugins/marketplace/index.json
+          git commit -m "chore(plugins): 将 $PLUGIN_ID $VERSION 加入官方插件索引"
+          git push origin "$branch"
+          gh pr create --base preview --head "$branch" \
+            --title "chore(plugins): 官方插件索引加入 $PLUGIN_ID $VERSION" \
+            --body "插件发布流程已发布 \`$TAG\`（资产 \`$ASSET_NAME\`）。本 PR 只把该版本的下载地址和 SHA-256 写入 \`Plugins/marketplace/index.json\`，合并后用户在插件市场刷新即可看到新版本。"

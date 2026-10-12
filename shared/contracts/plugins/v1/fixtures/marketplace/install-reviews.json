@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "description": "plugins.marketplace.installReview golden outcomes. `approvedPrograms` absent means a first installation. Edits apply to the base manifest before review.",
+  "cases": [
+    {
+      "name": "first installation lists every program",
+      "base": "php-support.plugin.json",
+      "expectedID": "dev.lithe.fixture.php-support",
+      "expectedVersion": "0.1.0",
+      "expected": {
+        "permissions": ["languageServer.launch", "process.run", "process.test"],
+        "programs": [
+          { "kind": "packagedLanguageServer", "languageID": "php", "path": "language-server/bin/intelephense", "arguments": ["--stdio"] },
+          { "kind": "run", "languageID": "php", "executable": { "command": "php" } },
+          { "kind": "runtime", "tool": "node" },
+          { "kind": "test", "languageID": "php", "executable": { "command": "php" } }
+        ],
+        "newProgramCount": 4
+      }
+    },
+    {
+      "name": "unchanged update needs no new approval",
+      "base": "php-support.plugin.json",
+      "edits": [{ "op": "set", "path": "/version", "value": "0.2.0" }],
+      "approvedFrom": "php-support.plugin.json",
+      "expected": { "newProgramCount": 0 }
+    },
+    {
+      "name": "changed language server arguments need approval",
+      "base": "php-support.plugin.json",
+      "edits": [{ "op": "set", "path": "/languageServers/0/arguments", "value": ["--stdio", "--log=verbose"] }],
+      "approvedFrom": "php-support.plugin.json",
+      "expected": {
+        "newPrograms": [
+          { "kind": "packagedLanguageServer", "languageID": "php", "path": "language-server/bin/intelephense", "arguments": ["--stdio", "--log=verbose"] }
+        ],
+        "newProgramCount": 1
+      }
+    },
+    {
+      "name": "package does not match the index entry",
+      "base": "php-support.plugin.json",
+      "expectedID": "dev.lithe.fixture.php-support",
+      "expectedVersion": "9.9.9",
+      "expectedCode": "plugin.package.mismatch"
+    },
+    {
+      "name": "unsigned package in the official namespace",
+      "base": "go-support.plugin.json",
+      "edits": [{ "op": "set", "path": "/vendor/signatureRequirement", "value": "none" }],
+      "expectedCode": "plugin.manifest.invalid"
+    },
+    {
+      "name": "unsigned community package",
+      "base": "go-support.plugin.json",
+      "edits": [
+        { "op": "set", "path": "/id", "value": "io.example.go-tools" },
+        { "op": "set", "path": "/vendor/signatureRequirement", "value": "none" }
+      ],
+      "expected": {
+        "programs": [
+          { "kind": "run", "languageID": "go", "executable": { "toolchain": "project-go" } },
+          { "kind": "runtime", "tool": "go" },
+          { "kind": "systemLanguageServer", "languageID": "go", "commands": ["gopls"], "arguments": [] },
+          { "kind": "test", "languageID": "go", "executable": { "toolchain": "project-go" } }
+        ]
+      }
+    }
+  ]
+}

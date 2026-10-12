@@ -5,72 +5,27 @@ import Testing
 @testable import Lithe
 
 struct MacPluginPackageDownloaderTests {
-    @Test
-    func officialPHPArchiveURLUsesTheAppReleaseVersionAndChannel() throws {
-        let configuration = MacPluginDistributionConfiguration(
-            releaseBaseURL: URL(string: "https://downloads.example.test/releases")!,
-            channel: .stable,
-            architecture: "arm64",
-            releaseVersion: PluginVersion(major: 0, minor: 5, patch: 8)
-        )
-
-        let url = try configuration.archiveURL(pluginID: OfficialPluginCatalog.phpPluginID)
-
-        #expect(url.absoluteString == "https://downloads.example.test/releases/v0.5.8/Lithe-PHP-Support-0.5.8-arm64.zip")
-    }
-
-    @Test
-    func previewPHPArchiveURLUsesTheRollingPreviewTag() throws {
-        let configuration = MacPluginDistributionConfiguration(
-            releaseBaseURL: URL(string: "https://downloads.example.test/releases")!,
-            channel: .preview,
-            architecture: "x86_64",
-            releaseVersion: PluginVersion(major: 0, minor: 3, patch: 0)
-        )
-
-        let url = try configuration.archiveURL(pluginID: OfficialPluginCatalog.phpPluginID)
-
-        #expect(url.absoluteString == "https://downloads.example.test/releases/preview-0.3.0/Lithe-PHP-Support-0.3.0-x86_64.zip")
-    }
-
     /// The release archive holds a declarative (schema 2) package. The
-    /// downloader must find it by `id` and hand it to the package store,
-    /// which performs the full validation.
+    /// downloader must verify the index checksum, find the package by `id`,
+    /// and hand it to the package store, which performs the full validation.
     @Test
     func downloadedDeclarativePackageIsFoundAndInstallable() async throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("lithe-plugin-download-test-\(UUID().uuidString)", isDirectory: true)
+        let root = PluginMarketplaceTestSupport.temporaryRoot("download")
         defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent("archive/dev.lithe.plugin.php-support", isDirectory: true)
         try DeclarativePluginTestSupport.writeOfficialPackage("PhpSupport", at: source)
-        let archive = root.appendingPathComponent("Lithe-PHP-Support.zip")
-        // The bounded runner terminates ditto if it outlives the timeout.
-        let zip = MacProcessRunner().run(ProcessRequest(
-            executablePath: "/usr/bin/ditto",
-            arguments: ["-c", "-k", "--keepParent", source.path, archive.path],
-            timeoutMilliseconds: 30_000
-        ))
-        try #require(zip.exitCode == 0, "\(zip.output)")
-
-        let host = "downloads-\(UUID().uuidString.lowercased()).example.test"
-        StubPluginArchiveProtocol.register(try Data(contentsOf: archive), host: host)
-        defer { StubPluginArchiveProtocol.unregister(host: host) }
-        let sessionConfiguration = URLSessionConfiguration.ephemeral
-        sessionConfiguration.protocolClasses = [StubPluginArchiveProtocol.self]
+        let archive = try PluginMarketplaceTestSupport.zip(source, to: root.appendingPathComponent("php.zip"))
         let downloader = MacPluginPackageDownloader(
-            configuration: MacPluginDistributionConfiguration(
-                releaseBaseURL: URL(string: "https://\(host)/releases")!,
-                channel: .stable,
-                architecture: "arm64",
-                releaseVersion: PluginVersion(major: 1, minor: 0, patch: 0)
-            ),
-            session: URLSession(configuration: sessionConfiguration),
+            transport: PluginMarketplaceTestSupport.LocalFileTransport(files: [
+                "https://github.com/Lithe-IDEA/Lithe-IDEA/releases/download/t/php.zip": archive
+            ]),
             temporaryDirectory: root
         )
 
         let downloaded = try await downloader.download(
-            pluginID: OfficialPluginCatalog.phpPluginID,
-            hostVersion: PluginVersion(major: 1, minor: 0, patch: 0)
+            archiveURL: URL(string: "https://github.com/Lithe-IDEA/Lithe-IDEA/releases/download/t/php.zip")!,
+            expectedSHA256: try MacPluginPackageDownloader.sha256(of: archive),
+            pluginID: OfficialPluginCatalog.phpPluginID
         )
         defer { try? FileManager.default.removeItem(at: downloaded.temporaryDirectory) }
         #expect(downloaded.packageURL.lastPathComponent == "dev.lithe.plugin.php-support")
@@ -89,49 +44,43 @@ struct MacPluginPackageDownloaderTests {
         #expect(installed.descriptor.pluginManifest.entrypoint.kind == .declarative)
     }
 
+    /// Nothing from an archive that differs from the index is extracted.
     @Test
-    func unsupportedPluginCannotBeMappedToThePHPArchive() {
-        let configuration = MacPluginDistributionConfiguration(architecture: "arm64")
+    func checksumMismatchIsRefusedBeforeExtraction() async throws {
+        let root = PluginMarketplaceTestSupport.temporaryRoot("checksum")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("archive/dev.lithe.plugin.php-support", isDirectory: true)
+        try DeclarativePluginTestSupport.writeOfficialPackage("PhpSupport", at: source)
+        let archive = try PluginMarketplaceTestSupport.zip(source, to: root.appendingPathComponent("php.zip"))
+        let extractionRoot = root.appendingPathComponent("extract", isDirectory: true)
+        let url = "https://github.com/Lithe-IDEA/Lithe-IDEA/releases/download/t/php.zip"
+        let downloader = MacPluginPackageDownloader(
+            transport: PluginMarketplaceTestSupport.LocalFileTransport(files: [url: archive]),
+            temporaryDirectory: extractionRoot
+        )
+        let expected = String(repeating: "0", count: 64)
 
-        #expect(throws: MacPluginPackageDownloadError.unsupportedPlugin(PluginID("dev.example.plugin"))) {
-            _ = try configuration.archiveURL(pluginID: PluginID("dev.example.plugin"))
+        await #expect(throws: MacPluginPackageDownloadError.checksumMismatch(
+            expected: expected,
+            actual: try MacPluginPackageDownloader.sha256(of: archive)
+        )) {
+            _ = try await downloader.download(
+                archiveURL: URL(string: url)!,
+                expectedSHA256: expected,
+                pluginID: OfficialPluginCatalog.phpPluginID
+            )
+        }
+        #expect(!FileManager.default.fileExists(atPath: extractionRoot.path))
+    }
+
+    @Test
+    func urlSessionTransportRefusesPlainHTTP() async {
+        let transport = MacURLSessionPluginMarketplaceTransport()
+        await #expect(throws: MacPluginPackageDownloadError.invalidEndpoint) {
+            _ = try await transport.download(
+                from: URL(string: "http://github.com/example/plugin.zip")!,
+                maximumBytes: 1
+            )
         }
     }
-}
-
-/// Serves a fixed archive for one host so download tests never reach the
-/// network. Hosts are unique per test, which keeps parallel tests isolated.
-private final class StubPluginArchiveProtocol: URLProtocol, @unchecked Sendable {
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var archives: [String: Data] = [:]
-
-    static func register(_ data: Data, host: String) {
-        lock.withLock { archives[host] = data }
-    }
-
-    static func unregister(host: String) {
-        lock.withLock { archives[host] = nil }
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool {
-        guard let host = request.url?.host else { return false }
-        return lock.withLock { archives[host] != nil }
-    }
-
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        guard let url = request.url, let host = url.host,
-              let data = Self.lock.withLock({ Self.archives[host] }),
-              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)
-        else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
-            return
-        }
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: data)
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    override func stopLoading() {}
 }

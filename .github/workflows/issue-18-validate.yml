@@ -41,6 +41,15 @@ jobs:
           git switch --detach ddd99cc69cf0f72e5ec07cbd7c4e84429f46073e
           git apply --check "$RUNNER_TEMP/issue-18.patch"
           git apply "$RUNNER_TEMP/issue-18.patch"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.agents/skills/write-stable-tests/scripts/test-stability-windows.ps1')
+          s = p.read_text().replace('-Manifest "windows/tauri/src-tauri/Cargo.toml" `\n        -Package "lithe-common-encodings"', '-Manifest "Plugins/win/Official/CommonEncodings/native/Cargo.toml" `\n        -Package "lithe-common-encodings"').replace('-Manifest "windows/tauri/src-tauri/Cargo.toml" `\n        -Package "lithe-project"', '-Manifest "windows/tauri/crates/project/Cargo.toml" `\n        -Package "lithe-project"')
+          s = s.replace('    # Cargo does not run dependency crate tests when testing only the Tauri host.', "    # Use each library manifest: Cargo does not load a non-workspace dependency\n    # package's dev-dependencies through the Tauri host manifest.")
+          p.write_text(s)
+          PY
+          cp windows/tauri/src-tauri/Cargo.lock windows/tauri/crates/project/Cargo.lock
+          cp windows/tauri/src-tauri/Cargo.lock Plugins/win/Official/CommonEncodings/native/Cargo.lock
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: windows/tauri/package.json
@@ -50,9 +59,11 @@ jobs:
           rustfmt --edition 2021 windows/tauri/src-tauri/src/document.rs
           cargo fmt --manifest-path Plugins/win/Official/CommonEncodings/native/Cargo.toml
       - name: Compile and time native document regression tests
-        run: node .agents/skills/write-stable-tests/scripts/run-rust-tests-with-timing.mjs --manifest windows/tauri/src-tauri/Cargo.toml --package lithe-project --suite-timeout-ms 480000 --report .artifacts/test-stability/issue18-project-linux.json
+        run: node .agents/skills/write-stable-tests/scripts/run-rust-tests-with-timing.mjs --manifest windows/tauri/crates/project/Cargo.toml --package lithe-project --suite-timeout-ms 480000 --report .artifacts/test-stability/issue18-project-linux.json
       - name: Compile and time every extra codec test
-        run: node .agents/skills/write-stable-tests/scripts/run-rust-tests-with-timing.mjs --manifest windows/tauri/src-tauri/Cargo.toml --package lithe-common-encodings --suite-timeout-ms 120000 --report .artifacts/test-stability/issue18-codecs-linux.json
+        run: node .agents/skills/write-stable-tests/scripts/run-rust-tests-with-timing.mjs --manifest Plugins/win/Official/CommonEncodings/native/Cargo.toml --package lithe-common-encodings --suite-timeout-ms 120000 --report .artifacts/test-stability/issue18-codecs-linux.json
+      - name: Check the host dependency graph and update its lockfile
+        run: cargo check --manifest-path windows/tauri/src-tauri/Cargo.toml -p lithe-project
       - name: Install locked frontend dependencies
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Type-check the Windows frontend
@@ -112,10 +123,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: windows/tauri/package.json
+      - name: Reuse the verified host dependency versions
+        run: |
+          Copy-Item windows/tauri/src-tauri/Cargo.lock windows/tauri/crates/project/Cargo.lock
+          Copy-Item windows/tauri/src-tauri/Cargo.lock Plugins/win/Official/CommonEncodings/native/Cargo.lock
       - name: Time native Windows document tests
-        run: node .agents/skills/write-stable-tests/scripts/run-rust-tests-with-timing.mjs --manifest windows/tauri/src-tauri/Cargo.toml --package lithe-project --suite-timeout-ms 480000 --report .artifacts/test-stability/issue18-project-windows.json
+        run: node .agents/skills/write-stable-tests/scripts/run-rust-tests-with-timing.mjs --manifest windows/tauri/crates/project/Cargo.toml --package lithe-project --suite-timeout-ms 480000 --report .artifacts/test-stability/issue18-project-windows.json
       - name: Time native Windows charset tests
-        run: node .agents/skills/write-stable-tests/scripts/run-rust-tests-with-timing.mjs --manifest windows/tauri/src-tauri/Cargo.toml --package lithe-common-encodings --suite-timeout-ms 120000 --report .artifacts/test-stability/issue18-codecs-windows.json
+        run: node .agents/skills/write-stable-tests/scripts/run-rust-tests-with-timing.mjs --manifest Plugins/win/Official/CommonEncodings/native/Cargo.toml --package lithe-common-encodings --suite-timeout-ms 120000 --report .artifacts/test-stability/issue18-codecs-windows.json
       - name: Install locked frontend dependencies
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Time Windows encoding frontend tests

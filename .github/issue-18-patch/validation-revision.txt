@@ -1,0 +1,1 @@
+Validation revision 4: compile the complete frontend and execute plugin activation with the package's inherited host tsconfig.

@@ -983,7 +983,8 @@ final class AppModel: ObservableObject, Identifiable, UnsavedDocumentHandling {
     func openFile(
         _ url: URL,
         isReadOnly: Bool = false,
-        displayPath: String? = nil
+        displayPath: String? = nil,
+        allowsOutsideWorkspace: Bool = false
     ) {
         editorTabOrderFeature.repositoryDiffSelected = false
         editorTabOrderFeature.databaseSelected = false
@@ -993,6 +994,10 @@ final class AppModel: ObservableObject, Identifiable, UnsavedDocumentHandling {
         // SVG remains a text document so edits, saves, and previews share one buffer.
         if let mediaKind = MediaDocumentKind.from(url: url) {
             openMediaFile(url, kind: mediaKind)
+            return
+        }
+        if allowsOutsideWorkspace {
+            documentFeature.openExternalReadOnlyFile(url, displayPath: displayPath)
             return
         }
         documentFeature.openFile(url, isReadOnly: isReadOnly, displayPath: displayPath)
@@ -1308,6 +1313,20 @@ final class AppModel: ObservableObject, Identifiable, UnsavedDocumentHandling {
                         support.displayName
                     )
                 )
+                return false
+            }
+            // A plugin enabled after launch registers its server after the
+            // startup probe ran, so probe it now instead of reporting the
+            // executable as missing before any check happened.
+            if let sessions = languageToolingSessionsIfActive,
+               let tools = languageServerToolsIfActive,
+               let registered = sessions.languageServerExtensionDescriptor(languageID: support.id),
+               tools.needsCandidateValidation(for: registered) {
+                Task { [weak self, weak document] in
+                    await tools.refreshCandidates(for: registered)
+                    guard let self, let document else { return }
+                    _ = self.activateLanguageServerIfAvailable(for: document)
+                }
                 return false
             }
             registerLanguageDependencySourceIfAvailable(support: support)

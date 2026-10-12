@@ -1,0 +1,130 @@
+name: Issue 18 focused validation
+
+on:
+  push:
+    branches: [fix/issue-18-text-encodings]
+    paths:
+      - .github/workflows/issue-18-validate.yml
+      - .github/issue-18-patch/**
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    outputs:
+      source_sha: ${{ steps.publish.outputs.source_sha }}
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.artifacts/issue-18-target
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Restore reviewed source changes onto their exact preview base
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, lzma, os, pathlib, subprocess
+          parts = [subprocess.check_output(['git', 'show', os.environ['SOURCE_SHA'] + ':.github/issue-18-patch/' + name + '.b64']) for name in ['00', '01', '02']]
+          patch = lzma.decompress(base64.b64decode(b''.join(parts)))
+          assert hashlib.sha256(patch).hexdigest() == '0422220947a77ae1fea91991834e33c32101d3026a260f55ff33d030fb305f42', 'Source patch digest mismatch'
+          pathlib.Path(os.environ['RUNNER_TEMP'], 'issue-18.patch').write_bytes(patch)
+          PY
+          test "$(git rev-parse origin/preview)" = ddd99cc69cf0f72e5ec07cbd7c4e84429f46073e
+          git switch --detach ddd99cc69cf0f72e5ec07cbd7c4e84429f46073e
+          git apply --check "$RUNNER_TEMP/issue-18.patch"
+          git apply "$RUNNER_TEMP/issue-18.patch"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: windows/tauri/package.json
+      - name: Format changed Rust modules only
+        run: |
+          rustfmt --edition 2024 windows/tauri/crates/project/src/document_file.rs
+          rustfmt --edition 2021 windows/tauri/src-tauri/src/document.rs
+          cargo fmt --manifest-path Plugins/win/Official/CommonEncodings/native/Cargo.toml
+      - name: Compile and time native document regression tests
+        run: node .agents/skills/write-stable-tests/scripts/run-rust-tests-with-timing.mjs --manifest windows/tauri/src-tauri/Cargo.toml --package lithe-project --suite-timeout-ms 480000 --report .artifacts/test-stability/issue18-project-linux.json
+      - name: Compile and time every extra codec test
+        run: node .agents/skills/write-stable-tests/scripts/run-rust-tests-with-timing.mjs --manifest windows/tauri/src-tauri/Cargo.toml --package lithe-common-encodings --suite-timeout-ms 120000 --report .artifacts/test-stability/issue18-codecs-linux.json
+      - name: Install locked frontend dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Type-check the Windows frontend
+        working-directory: windows/tauri
+        run: bun run typecheck
+      - name: Time plugin lifecycle, encoding workflow and error feedback tests
+        run: node .agents/skills/write-stable-tests/scripts/run-bun-tests-with-timing.mjs --working-directory windows/tauri --suite-timeout-ms 120000 --report .artifacts/test-stability/issue18-frontend-linux.json -- src/extensions/document-encodings src/features/editor/services/document-encoding-workflow.test.ts src/features/file-system/controllers/read-file-with-feedback.test.ts src/platform/tauri-core.routing.test.ts
+      - name: Install static verification shell
+        run: command -v zsh || (sudo apt-get update -qq && sudo apt-get install -y zsh)
+      - name: Validate source contracts and publish a clean branch
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          git apply --numstat "$RUNNER_TEMP/issue-18.patch" | cut -f3 | xargs -d '\n' git add --
+          git add windows/tauri/src-tauri/Cargo.lock
+          node scripts/verify-agent-notes.mjs
+          ./scripts/verify-windows-boundaries.sh
+          ./scripts/verify-runtime-bundle-immutability.sh
+          ./scripts/verify-shared-contracts.sh
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix(editor): preserve UTF-16 documents and add optional common encodings plugin'
+          ./scripts/verify-platform-feature-matrix-change.sh ddd99cc69cf0f72e5ec07cbd7c4e84429f46073e HEAD
+          ./scripts/verify-platform-feature-matrix.sh
+          node .agents/skills/write-stable-tests/scripts/verify-test-stability.mjs --platform all --base ddd99cc69cf0f72e5ec07cbd7c4e84429f46073e
+          git diff --check ddd99cc69cf0f72e5ec07cbd7c4e84429f46073e HEAD
+          gh auth setup-git
+          git push origin HEAD:refs/heads/fix/issue-18-utf16-common-encodings
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git bundle create "$RUNNER_TEMP/issue-18-reviewed.bundle" HEAD ^ddd99cc69cf0f72e5ec07cbd7c4e84429f46073e
+      - name: Upload validation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-18-linux-validation
+          path: .artifacts/test-stability/
+          if-no-files-found: ignore
+          retention-days: 3
+      - name: Upload exact reviewed source delta
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-18-reviewed-source
+          path: ${{ runner.temp }}/issue-18-reviewed.bundle
+          retention-days: 1
+
+  windows:
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.artifacts/issue-18-target
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: windows/tauri/package.json
+      - name: Time native Windows document tests
+        run: node .agents/skills/write-stable-tests/scripts/run-rust-tests-with-timing.mjs --manifest windows/tauri/src-tauri/Cargo.toml --package lithe-project --suite-timeout-ms 480000 --report .artifacts/test-stability/issue18-project-windows.json
+      - name: Time native Windows charset tests
+        run: node .agents/skills/write-stable-tests/scripts/run-rust-tests-with-timing.mjs --manifest windows/tauri/src-tauri/Cargo.toml --package lithe-common-encodings --suite-timeout-ms 120000 --report .artifacts/test-stability/issue18-codecs-windows.json
+      - name: Install locked frontend dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Time Windows encoding frontend tests
+        run: node .agents/skills/write-stable-tests/scripts/run-bun-tests-with-timing.mjs --working-directory windows/tauri --suite-timeout-ms 120000 --report .artifacts/test-stability/issue18-frontend-windows.json -- src/extensions/document-encodings src/features/editor/services/document-encoding-workflow.test.ts src/features/file-system/controllers/read-file-with-feedback.test.ts src/platform/tauri-core.routing.test.ts
+      - name: Upload Windows reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-18-windows-validation
+          path: .artifacts/test-stability/
+          if-no-files-found: ignore
+          retention-days: 3

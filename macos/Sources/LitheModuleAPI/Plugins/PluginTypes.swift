@@ -454,6 +454,9 @@ public struct PluginManifest: Equatable, Codable, Sendable {
 public enum PluginInstallationOrigin: String, Codable, Sendable {
     case bundled
     case marketplace
+    /// An unsigned package installed from disk by a development build. Release
+    /// builds reject this origin instead of loading its code.
+    case localDevelopment
 }
 
 public enum PluginInstallationStatus: String, Codable, Sendable {

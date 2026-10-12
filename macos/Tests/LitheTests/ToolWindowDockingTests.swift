@@ -156,7 +156,8 @@ struct ToolWindowDockingTests {
         #expect(clicks == 1)
     }
 
-    @Test func nativeWindowDragCommitsOnlyOnReleaseAndClosesItsPreview() throws {
+    @Test(arguments: [ColorScheme.dark, .light])
+    func nativeWindowDragCommitsOnlyOnReleaseAndClosesItsPreview(scheme: ColorScheme) throws {
         let drag = ToolWindowDragState()
         let model = WorkbenchFeatureModel()
         model.setVisibility(.terminal, isVisible: true)
@@ -167,7 +168,8 @@ struct ToolWindowDockingTests {
             .overlay(ToolWindowDragSource(tool: .terminal, position: .init(anchor: .bottom, group: .primary),
                 drag: drag, image: {
                     ImageRenderer(content: Rectangle().fill(Color(.sRGB, red: 1, green: 0, blue: 0, opacity: 1))
-                        .frame(width: 20, height: 20).frame(width: 30, height: 30)).nsImage
+                        .frame(width: 20, height: 20).modifier(LitheToolWindowDragButtonStyle())
+                        .environment(\.colorScheme, scheme)).nsImage
                 }, click: {}, commit: { model.move($0, to: $1.position, before: $1.before) })))
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 600, height: 600),
                               styleMask: [.borderless], backing: .buffered, defer: false)
@@ -191,7 +193,7 @@ struct ToolWindowDockingTests {
         try send(.leftMouseDragged, NSPoint(x: start.x + 15, y: start.y), 1)
         try send(.leftMouseDragged, NSPoint(x: 500, y: 300), 2)
         #expect(drag.source == .terminal)
-        // A panel existing is insufficient: the floating preview must contain the glyph without selection chrome.
+        // Check the actual floating image, including its normal surface and transparent corners.
         let preview = try #require(NSApp.windows.first { $0.identifier?.rawValue == "lithe.tool-window-drag-preview" && $0.isVisible })
         let image = try #require((preview.contentView as? NSImageView)?.image)
         let tiff = try #require(image.tiffRepresentation)
@@ -199,8 +201,20 @@ struct ToolWindowDockingTests {
         let center = try #require(pixels.colorAt(x: pixels.pixelsWide / 2, y: pixels.pixelsHigh / 2)?.usingColorSpace(.sRGB))
         #expect(center.alphaComponent > 0.9)
         // A selected source must not carry its blue background into the floating glyph.
-        let corner = try #require(pixels.colorAt(x: 1, y: 1))
+        let corner = try #require(pixels.colorAt(x: 0, y: 0))
         #expect(corner.alphaComponent < 0.01)
+        let background = try #require(pixels.colorAt(x: 2 * pixels.pixelsWide / 30, y: pixels.pixelsHigh / 2)?.usingColorSpace(.sRGB))
+        #expect(background.alphaComponent > 0.9)
+        // Compare the same color through ImageRenderer so display-profile conversion is identical.
+        let referenceImage = try #require(ImageRenderer(content: Rectangle()
+            .fill(LitheTheme.toolWindowFloatingButtonBackground(for: scheme)).frame(width: 30, height: 30)).nsImage)
+        let referenceTIFF = try #require(referenceImage.tiffRepresentation)
+        let referencePixels = try #require(NSBitmapImageRep(data: referenceTIFF))
+        let expected = try #require(referencePixels.colorAt(x: referencePixels.pixelsWide / 2,
+            y: referencePixels.pixelsHigh / 2)?.usingColorSpace(.sRGB))
+        #expect(abs(background.redComponent - expected.redComponent) < 0.01)
+        #expect(abs(background.greenComponent - expected.greenComponent) < 0.01)
+        #expect(abs(background.blueComponent - expected.blueComponent) < 0.01)
         #expect(center.redComponent > center.greenComponent + 0.5)
         #expect(center.redComponent > center.blueComponent + 0.5)
         #expect(model.toolWindowStates == original)

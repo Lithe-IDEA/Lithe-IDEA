@@ -1228,7 +1228,7 @@ struct WorkbenchView: View {
                             resourcePath: tool.sidebar?.ideaAssetPath ?? renderer?.ideaAssetPath ?? "expui/toolwindows/toolWindowComponents@20x20.svg",
                             size: ActivityBarMetrics.iconSize)
                             .foregroundStyle(LitheTheme.toolWindowButtonText)
-                            .frame(width: ActivityBarMetrics.buttonWidth, height: ActivityBarMetrics.buttonHeight)
+                            .modifier(LitheToolWindowDragButtonStyle())
                             .environment(\.colorScheme, colorScheme)).nsImage
                     }, click: { openTool(tool) }, commit: { moveTool($0, target: $1) }, isEnabled: isToolAvailable(tool)))
                     .opacity(toolWindowDrag.source == tool ? 0 : 1)

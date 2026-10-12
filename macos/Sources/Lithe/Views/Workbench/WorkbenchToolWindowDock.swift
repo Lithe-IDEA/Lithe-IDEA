@@ -1,6 +1,18 @@
 import AppKit
 import SwiftUI
 
+/// SquareStripeButtonLook paints a normal floating surface, independent of source selection.
+struct LitheToolWindowDragButtonStyle: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+    func body(content: Content) -> some View {
+        let surface = LitheTheme.toolWindowFloatingButtonBackground(for: scheme)
+        content
+            .frame(width: ActivityBarMetrics.buttonWidth, height: ActivityBarMetrics.buttonHeight)
+            .background(surface, in: RoundedRectangle(cornerRadius: 6))
+            .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(surface, lineWidth: 1) }
+    }
+}
+
 /// Drag geometry and preview are view-local; only mouse-up commits application layout.
 @MainActor
 final class ToolWindowDragState: ObservableObject {
@@ -202,7 +214,7 @@ struct ToolWindowDragSource: NSViewRepresentable {
                                 y: event.locationInWindow.y - pressed.locationInWindow.y)
             guard dragging || hypot(delta.x, delta.y) >= 5 else { return }
             if !dragging {
-                // Paint only the glyph: a source snapshot also captures selection and hover backgrounds.
+                // Paint the normal floating button; never snapshot source selection or hover.
                 guard let image = image?() else { return }
                 let rect = convert(NSRect(x: bounds.midX - image.size.width / 2,
                                           y: bounds.midY - image.size.height / 2,

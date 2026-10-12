@@ -379,6 +379,11 @@ enum LitheTheme {
         })
     }
     // Community ManyIslands ActionButton tokens; opt in without changing other controls.
+    // ToolWindow.DragAndDrop.buttonFloatingBackground → Islands control-bg-small.
+    static func toolWindowFloatingButtonBackground(for scheme: ColorScheme) -> Color {
+        Color(nsColor: RGBA(scheme == .dark ? 0x40434A : 0xDDDFE4).nsColor)
+    }
+
     /// ToolWindow.DragAndDrop.areaBackground, Community Islands c7f91397.
     static var toolWindowDropButton: Color {
         Color(nsColor: NSColor(name: nil) { appearance in

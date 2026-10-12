@@ -33,3 +33,10 @@ lines[index + 2:index + 2] = [
     '          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n',
 ]
 workflow.write_text(''.join(lines))
+
+# Resolve host aliases when Bun loads this package from outside windows/tauri.
+import subprocess
+config = Path("Plugins/win/Official/CommonEncodings/tsconfig.json")
+assert not config.exists()
+config.write_text('{\n  "extends": "../../../../windows/tauri/tsconfig.json",\n  "include": ["*.ts"]\n}\n')
+subprocess.run(["git", "add", "--", str(config)], check=True)

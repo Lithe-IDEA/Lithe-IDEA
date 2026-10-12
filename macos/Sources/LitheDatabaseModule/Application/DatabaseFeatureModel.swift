@@ -844,6 +844,7 @@ package final class DatabaseFeatureModel: ObservableObject {
                 return mysqlPrimary || sqlitePrimary ? name : nil
             }
             if columns.isEmpty { columns = result.rows.first.map { Array($0.keys).sorted() } ?? [] }
+            discardTableEdits()
             sourceRows = result.rows
             rows = masked(result.rows)
             totalRows = result.totalRows ?? Int64(result.rows.count)
@@ -851,6 +852,7 @@ package final class DatabaseFeatureModel: ObservableObject {
             currentOffset = 0
         } catch {
             if isCurrent(profileID: profile.id, generation: generation), selectedTable == table, tableRequestID == requestID {
+                discardTableEdits()
                 errorMessage = executionError(error)
                 rows = []; sourceRows = []; columns = []; columnTypes = [:]; indexes = []; foreignKeys = []; totalRows = 0
             }
@@ -1220,6 +1222,8 @@ package final class DatabaseFeatureModel: ObservableObject {
         var totalRowsAffected: UInt64 = 0
         var hasRowsAffected = false
         var lastQueryResult: DatabaseQueryResult?
+        var completedStatementCount = 0
+        var stoppedForNavigation = false
         updateSQLTab(tabID) { tab in
             tab.isRunning = true; tab.errorMessage = nil; tab.result = nil; tab.resultColumns = []; tab.rowsAffected = nil; tab.execution = nil
             // Output retains small log records; result pages belong only to the current batch.
@@ -1234,9 +1238,11 @@ package final class DatabaseFeatureModel: ObservableObject {
             }
             let recoveryPoint: DatabaseRecoveryPoint? = hasMutation ? try await createRecoveryPoint(profile: profile, reason: "Before SQL execution") : nil
             recoveryPointID = recoveryPoint?.id
-            guard isCurrent(profileID: profile.id, generation: generation) else { return }
             for (index, statement) in analysis.statements.enumerated() {
-                guard isCurrent(profileID: profile.id, generation: generation), sqlTabs.contains(where: { $0.id == tabID }) else { return }
+                guard isCurrent(profileID: profile.id, generation: generation), sqlTabs.contains(where: { $0.id == tabID }) else {
+                    stoppedForNavigation = true
+                    break
+                }
                 let statementSQL = statement.trimmingCharacters(in: .whitespacesAndNewlines)
                 var range = searchRange.location == NSNotFound ? NSRange(location: NSNotFound, length: 0) : source.range(of: statementSQL, range: searchRange)
                 if range.location != NSNotFound {
@@ -1272,6 +1278,7 @@ package final class DatabaseFeatureModel: ObservableObject {
                         hasRowsAffected = true
                         affected = result.rowsAffected
                     }
+                    completedStatementCount += 1
                     record()
                 } catch {
                     let message = executionError(error)
@@ -1290,23 +1297,28 @@ package final class DatabaseFeatureModel: ObservableObject {
                 rowsAffected: hasRowsAffected ? totalRowsAffected : nil,
                 truncated: lastQueryResult?.truncated ?? false
             )
-            guard isCurrent(profileID: profile.id, generation: generation) else { return }
-            updateSQLTab(tabID) { tab in
-                tab.result = lastQueryResult.map(masked)
-                tab.resultColumns = columns
-                tab.rowsAffected = hasRowsAffected ? totalRowsAffected : nil
-                tab.execution = execution
+            let stopMessage = stoppedForNavigation
+                ? "SQL batch stopped after \(completedStatementCount) of \(analysis.statementCount) statements because the query context changed. Earlier statements may have been applied."
+                : nil
+            // Persist the original operation regardless of which connection is now visible.
+            if isCurrent(profileID: profile.id, generation: generation) {
+                updateSQLTab(tabID) { tab in
+                    tab.result = lastQueryResult.map(masked)
+                    tab.resultColumns = columns
+                    tab.rowsAffected = hasRowsAffected ? totalRowsAffected : nil
+                    tab.execution = execution
+                }
             }
             recordSQLHistory(profileID: profile.id, sql: sql, analysis: analysis, execution: execution)
             let operation = analysis.statementCount > 1 ? "batch" : analysis.kind.rawValue
-            appendExecutionEvent(DatabaseExecutionEvent(id: UUID(), profileID: profile.id, profileName: profile.name, source: .sql, operation: operation, startedAt: startedAt, durationMilliseconds: execution.durationMilliseconds, status: .succeeded, rowsReturned: execution.rowsReturned, rowsAffected: execution.rowsAffected, errorMessage: nil))
-            appendAudit(DatabaseAuditEntry(id: UUID(), profileID: profile.id, action: "sql", summary: "Executed \(analysis.statementCount) SQL statement\(analysis.statementCount == 1 ? "" : "s")", createdAt: startedAt, recoveryPointID: recoveryPointID, rowsAffected: execution.rowsAffected, succeeded: true, errorMessage: nil))
-            if hasMutation { await refreshTables() }
+            appendExecutionEvent(DatabaseExecutionEvent(id: UUID(), profileID: profile.id, profileName: profile.name, source: .sql, operation: operation, startedAt: startedAt, durationMilliseconds: execution.durationMilliseconds, status: stoppedForNavigation ? .cancelled : .succeeded, rowsReturned: execution.rowsReturned, rowsAffected: execution.rowsAffected, errorMessage: stopMessage))
+            appendAudit(DatabaseAuditEntry(id: UUID(), profileID: profile.id, action: "sql", summary: stopMessage ?? "Executed \(completedStatementCount) SQL statement\(completedStatementCount == 1 ? "" : "s")", createdAt: startedAt, recoveryPointID: recoveryPointID, rowsAffected: execution.rowsAffected, succeeded: !stoppedForNavigation, errorMessage: stopMessage))
+            if hasMutation, isCurrent(profileID: profile.id, generation: generation) { await refreshTables() }
         } catch {
-            guard isCurrent(profileID: profile.id, generation: generation) else { return }
             let sanitizedError = executionError(error)
             let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
-            if sqlTabs.first(where: { $0.id == tabID })?.statementExecutions.contains(where: { $0.batchStartedAt == startedAt }) != true {
+            if isCurrent(profileID: profile.id, generation: generation),
+               sqlTabs.first(where: { $0.id == tabID })?.statementExecutions.contains(where: { $0.batchStartedAt == startedAt }) != true {
                 // Preparation can fail before any statement reaches the provider; log it without a fabricated range/result.
                 appendSQLStatementExecution(DatabaseSQLStatementExecution(id: UUID(), sql: sql, sourceSQL: sourceTab.sql,
                     sourceRange: nil, startedAt: startedAt, batchStartedAt: startedAt, durationMilliseconds: duration,
@@ -1315,14 +1327,15 @@ package final class DatabaseFeatureModel: ObservableObject {
             let operation = analysis.statementCount > 1 ? "batch" : analysis.kind.rawValue
             appendExecutionEvent(DatabaseExecutionEvent(id: UUID(), profileID: profile.id, profileName: profile.name, source: .sql, operation: operation, startedAt: startedAt, durationMilliseconds: duration, status: .failed, rowsReturned: nil, rowsAffected: hasRowsAffected ? totalRowsAffected : nil, errorMessage: sanitizedError))
             appendAudit(DatabaseAuditEntry(id: UUID(), profileID: profile.id, action: "sql", summary: "SQL execution failed", createdAt: startedAt, recoveryPointID: recoveryPointID, rowsAffected: hasRowsAffected ? totalRowsAffected : nil, succeeded: false, errorMessage: sanitizedError))
-            updateSQLTab(tabID) { tab in
-                tab.errorMessage = sanitizedError
-                tab.execution = DatabaseSQLExecution(startedAt: startedAt, durationMilliseconds: duration,
-                    rowsReturned: nil, rowsAffected: hasRowsAffected ? totalRowsAffected : nil, truncated: false)
-                tab.rowsAffected = hasRowsAffected ? totalRowsAffected : nil; tab.result = nil; tab.resultColumns = []
-            }
-            if let execution = sqlTabs.first(where: { $0.id == tabID })?.execution {
-                recordSQLHistory(profileID: profile.id, sql: sql, analysis: analysis, execution: execution)
+            let execution = DatabaseSQLExecution(startedAt: startedAt, durationMilliseconds: duration,
+                rowsReturned: nil, rowsAffected: hasRowsAffected ? totalRowsAffected : nil, truncated: false)
+            recordSQLHistory(profileID: profile.id, sql: sql, analysis: analysis, execution: execution)
+            if isCurrent(profileID: profile.id, generation: generation) {
+                updateSQLTab(tabID) { tab in
+                    tab.errorMessage = sanitizedError
+                    tab.execution = execution
+                    tab.rowsAffected = hasRowsAffected ? totalRowsAffected : nil; tab.result = nil; tab.resultColumns = []
+                }
             }
         }
     }

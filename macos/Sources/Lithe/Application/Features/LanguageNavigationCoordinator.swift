@@ -207,9 +207,13 @@ final class LanguageNavigationCoordinator: ObservableObject {
         }
     }
 
-    /// Classifies a jump target by its real location. A path inside the
-    /// workspace that is a symlink to somewhere outside it counts as outside,
-    /// so it cannot bypass the source-file check or the read-only rule.
+    /// Classifies a jump target by both the path it is opened under and its
+    /// real location. Only a target whose path and resolved path are both
+    /// inside the workspace is a workspace file: an in-workspace symlink to
+    /// the outside must not skip the source-file check or the read-only rule,
+    /// and an outside symlink to a workspace file is opened under its outside
+    /// path, which the document layer only accepts as an external read-only
+    /// document.
     nonisolated static func externalNavigationDecision(
         for url: URL,
         workspaceURL: URL?,
@@ -217,8 +221,12 @@ final class LanguageNavigationCoordinator: ObservableObject {
         languageOf: (URL) -> String?
     ) -> ExternalNavigationDecision {
         guard url.isFileURL, let workspaceURL else { return .workspace }
-        let root = workspaceURL.resolvingSymlinksInPath().path
-        if url.resolvingSymlinksInPath().path.hasPrefix(root + "/") {
+        let roots = [workspaceURL.standardizedFileURL, workspaceURL.resolvingSymlinksInPath()]
+            .map(\.path)
+        let opensInside = roots.contains { url.standardizedFileURL.path.hasPrefix($0 + "/") }
+        let resolvesInside = url.resolvingSymlinksInPath().path
+            .hasPrefix(workspaceURL.resolvingSymlinksInPath().path + "/")
+        if opensInside && resolvesInside {
             return .workspace
         }
         return allowsExternalSource(url, languageID: languageID, languageOf: languageOf)

@@ -33,7 +33,7 @@
 4. 每个 `packaged` 语言服务器入口必须是包内的普通可执行文件，不能是符号链接。
 5. `MacPluginStartupLoader` 只做静态校验（与内置清单的所有权冲突、模块依赖图），不加载代码。被接受的包无论是否启用都注册宿主模块，启用状态只决定能否激活，所以启用、禁用即时生效，不需要重启；只有启动后才安装的包需要重启才能进入模块图。
 6. `MacServiceContainer.declarativePluginFactories` 用声明配置通用的 `BundledLanguageServerModule` 和 `BundledLanguageExecutionModule`。运行/测试计划由 `DeclarativeLanguageExecutionCapability` 交给 Rust Core 展开；进程仍由模块的资源范围持有，禁用时一并停止。
-7. `packaged` 语言服务器固定为**本插件**已安装版本目录里的完整路径（`LanguageServerExtensionConfiguration.executableURL`），它就是唯一候选，不按文件名在 PATH 或其他插件里查找：两个插件都打包 `bin/language-server` 时也不会互相启动对方的服务器，文件缺失时直接报不可用而不是换成同名工具；`systemCommand`（如 gopls）走普通工具发现。`runtimeDependencies` 声明的运行时（v1 支持 `node`、`go`）由宿主发现，导出为 `LITHE_<TOOL>_PATH`，并把所在目录放到语言服务器 `PATH` 最前面：Intelephense 的启动脚本读 `LITHE_NODE_PATH`，gopls 则自己调用 `go`。从 Dock 打开的应用不继承 shell 的 `PATH`（没有 `/opt/homebrew/bin`），不声明 `go` 时 gopls 能启动但每个请求都报 `no views`。项目目录里的同名工具永远不会被选中，因为语言服务器在打开文件时自动启动，不能执行仓库自带的程序。
+7. `packaged` 语言服务器固定为**本插件**已安装版本目录里的完整路径（`LanguageServerExtensionConfiguration.executableURL`），它就是唯一候选，不按文件名在 PATH 或其他插件里查找，升级前保存的自定义可执行路径也不会排到它前面或在它缺失时顶替：两个插件都打包 `bin/language-server` 时也不会互相启动对方的服务器，文件缺失时直接报不可用而不是换成同名工具；`systemCommand`（如 gopls）走普通工具发现。`runtimeDependencies` 声明的运行时（v1 支持 `node`、`go`）由宿主发现，导出为 `LITHE_<TOOL>_PATH`，并把所在目录放到语言服务器 `PATH` 最前面：Intelephense 的启动脚本读 `LITHE_NODE_PATH`，gopls 则自己调用 `go`。从 Dock 打开的应用不继承 shell 的 `PATH`（没有 `/opt/homebrew/bin`），不声明 `go` 时 gopls 能启动但每个请求都报 `no views`。项目目录里的同名工具永远不会被选中，因为语言服务器在打开文件时自动启动，不能执行仓库自带的程序。
 8. 带 `validationArguments` 的语言服务器（如 `gopls version`）只有探测通过的候选才会被使用。插件在启动后才启用时，它的语言服务器错过了启动时的探测，所以 `AppModel` 在注册后发现尚未探测，会先探测再启动，而不是先报“找不到 gopls”再靠重试恢复。
 
 ### 3. 去掉原生加载与过严的隔离
@@ -54,7 +54,9 @@ gopls 把 `fmt.Println` 的定义指向 `GOROOT/src/fmt/print.go`，Intelephense
 
 现在只有语言服务器跳转（定义、实现、引用、导航历史）可以离开工作区，并且同时满足：
 
+- 目标按“打开时使用的路径”和“解析符号链接后的真实路径”分别判断，两者都在工作区内才算工作区文件；其余一律走外部规则，所以工作区内指向外部的符号链接，以及外部指向工作区文件的符号链接，都不能绕过白名单或只读限制。
 - 目标文件和它解析符号链接后的真实路径，都必须是**发起跳转的语言**的源码文件：从 Go 跳只能打开 `.go`，从 PHP 跳只能打开 `.php`/`.phtml`。判断由 `LanguageNavigationCoordinator.allowsExternalSource` 依据语言目录完成。语言目录里也有 `json`、`yaml`、`sh` 这类可能存放密钥的格式，所以不能放宽成“任意已知语言”。
+- 导航历史的 Back/Forward 回放不保存来源语言（当前语言可能已切换），而是把该文件当作它自己语言的源码重新校验；条目只可能来自当初已被接受的跳转。
 - 文档始终只读，`isFileWritable` 为 false，保存会被拒绝。普通打开（项目树、搜索、外部 URL）仍然拒绝工作区外路径。
 
 依赖树（把 GOROOT、模块缓存、`vendor/` 显示到依赖面板）不在这次范围，另行设计。

@@ -142,6 +142,23 @@ package final class LanguageServerToolService: ObservableObject {
     private func discoveredCandidates(
         for descriptor: LanguageProviderDescriptor
     ) -> [RuntimeToolCandidate] {
+        // A provider-pinned executable (a server packaged in its plugin) is the
+        // only candidate: it is never looked up by name, and a stale custom
+        // override from a previous install cannot replace the validated entry,
+        // so two plugins shipping the same file name cannot start each other's
+        // server.
+        if let pinned = descriptor.languageServerLaunch?.executableURL {
+            guard let executableURL = runtimeService.executableURL(at: pinned.path) else {
+                return []
+            }
+            return [RuntimeToolCandidate(
+                command: descriptor.languageServerLaunch?.executableNames.first ?? descriptor.id,
+                executableURL: executableURL,
+                source: .bundled,
+                detail: "Packaged with \(descriptor.displayName)"
+            )]
+        }
+
         var result: [RuntimeToolCandidate] = []
         var seen = Set<String>()
 
@@ -155,22 +172,6 @@ package final class LanguageServerToolService: ObservableObject {
             )
             result.append(candidate)
             seen.insert(executableURL.path)
-        }
-
-        // A provider-pinned executable (a server packaged in its plugin) is
-        // never looked up by name, so two plugins shipping the same file name
-        // cannot start each other's server.
-        if let pinned = descriptor.languageServerLaunch?.executableURL {
-            if let executableURL = runtimeService.executableURL(at: pinned.path),
-               seen.insert(executableURL.path).inserted {
-                result.append(RuntimeToolCandidate(
-                    command: descriptor.languageServerLaunch?.executableNames.first ?? descriptor.id,
-                    executableURL: executableURL,
-                    source: .bundled,
-                    detail: "Packaged with \(descriptor.displayName)"
-                ))
-            }
-            return result
         }
 
         for command in descriptor.languageServerLaunch?.executableNames ?? [] {

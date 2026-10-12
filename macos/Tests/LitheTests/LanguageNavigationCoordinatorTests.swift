@@ -47,6 +47,41 @@ struct LanguageNavigationCoordinatorTests {
         #expect(decision(URL(string: "jdt://contents/rt.jar/java.lang/String.class")!) == .workspace)
     }
 
+    /// `/outside/link.go -> /workspace/main.go` resolves inside the workspace,
+    /// but it is opened under its outside path, which the document layer only
+    /// accepts as an external read-only document. It must not be classified as
+    /// a plain workspace file.
+    @Test("an outside symlink to a workspace file is not a workspace file")
+    func outsideSymlinkToWorkspaceFileIsExternal() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lithe-reverse-link-\(UUID().uuidString)", isDirectory: true)
+        let workspace = root.appendingPathComponent("project", isDirectory: true)
+        let outside = root.appendingPathComponent("outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let main = workspace.appendingPathComponent("main.go")
+        let notes = workspace.appendingPathComponent("notes.json")
+        try Data("package main\n".utf8).write(to: main)
+        try Data("{}\n".utf8).write(to: notes)
+        let link = outside.appendingPathComponent("link.go")
+        let jsonLink = outside.appendingPathComponent("notes.go")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: main)
+        try FileManager.default.createSymbolicLink(at: jsonLink, withDestinationURL: notes)
+        let languageOf: (URL) -> String? = { $0.pathExtension == "go" ? "go" : nil }
+        func decision(_ url: URL, language: String) -> ExternalNavigationDecision {
+            LanguageNavigationCoordinator.externalNavigationDecision(
+                for: url, workspaceURL: workspace, languageID: language, languageOf: languageOf
+            )
+        }
+
+        #expect(decision(link, language: "go") == .externalReadOnly)
+        #expect(decision(link, language: "php") == .rejected)
+        // A .go name that resolves to a non-Go file still fails the source check.
+        #expect(decision(jsonLink, language: "go") == .rejected)
+        #expect(decision(main, language: "go") == .workspace)
+    }
+
     @Test("external jumps open only source files of the originating language")
     func externalJumpsOnlyOpenSameLanguageSources() throws {
         let root = FileManager.default.temporaryDirectory

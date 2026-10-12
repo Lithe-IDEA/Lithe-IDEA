@@ -59,6 +59,7 @@ extension AppModel {
     }
 
     func selectMediaDocument(_ media: MediaDocument) {
+        editorTabOrderFeature.focus(.media(media.id))
         guard openMediaDocuments.contains(where: { $0.id == media.id }) else { return }
         terminalPlacementFeature.activateDocument()
         activeDocumentID = nil

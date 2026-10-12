@@ -1454,3 +1454,13 @@
 "Expand All" = "Expand All";
 
 "Collapse All" = "Collapse All";
+
+/* Tool window docking destinations. */
+"Move to Left Top" = "Move to Left Top";
+"Move to Left Bottom" = "Move to Left Bottom";
+"Move to Right Top" = "Move to Right Top";
+"Move to Right Bottom" = "Move to Right Bottom";
+"Move to Bottom Left" = "Move to Bottom Left";
+"Move to Bottom Right" = "Move to Bottom Right";
+
+"Could not move the editor tab. Its content could not be synchronized." = "Could not move the editor tab. Its content could not be synchronized.";

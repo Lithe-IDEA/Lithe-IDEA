@@ -1347,7 +1347,6 @@ struct GitLogView: View {
                 minimum: minimumFilesPaneHeight,
                 maximum: maximumFilesPaneHeight,
                 dividerColor: LitheTheme.toolWindowBorder(for: colorScheme),
-                highlightsOnHover: false,
                 sized: { files },
                 flexible: { detail }
             )
@@ -3187,7 +3186,6 @@ private struct GitLogThreePaneLayout<ReferencePane: View, CommitPane: View, Deta
             clipsSizedPane: true,
             isSizedPaneCollapsed: branchesCollapsed,
             dividerColor: LitheTheme.toolWindowBorder(for: colorScheme),
-            highlightsOnHover: false,
             onCommit: { referenceWidth = $0 },
             sized: { referencePane },
             flexible: { commitAndDetails }
@@ -3202,7 +3200,6 @@ private struct GitLogThreePaneLayout<ReferencePane: View, CommitPane: View, Deta
             minimum: GitLogThreePaneMetrics.minimumDetailPaneWidth,
             maximum: detailPaneMaximum,
             dividerColor: LitheTheme.toolWindowBorder(for: colorScheme),
-            highlightsOnHover: false,
             onCommit: { detailWidth = $0 },
             sized: { detailPane },
             flexible: { commitPane }

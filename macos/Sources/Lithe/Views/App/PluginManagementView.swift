@@ -65,7 +65,7 @@ struct PluginManagementView: View {
                     minimum: Self.listMinimumWidth,
                     maximum: max(Self.listMinimumWidth, geometry.size.width - SplitHandleView.thickness - Self.detailMinimumWidth),
                     flexibleMinimum: Self.detailMinimumWidth,
-                    highlightsOnHover: false,
+
                     onCommit: { pluginListWidth = Double($0) },
                     sized: { sidebar },
                     flexible: { detail }

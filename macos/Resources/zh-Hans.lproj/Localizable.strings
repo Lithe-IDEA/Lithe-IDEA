@@ -2741,3 +2741,13 @@
 "Download PHP Support from the official signed plugin package." = "从官方签名的插件包下载 PHP 支持。";
 
 "Only source files of the current language can be opened from outside the workspace" = "工作区外只能打开当前语言的源码文件";
+
+/* Tool window docking destinations. */
+"Move to Left Top" = "移到左侧上方";
+"Move to Left Bottom" = "移到左侧下方";
+"Move to Right Top" = "移到右侧上方";
+"Move to Right Bottom" = "移到右侧下方";
+"Move to Bottom Left" = "移到底部左侧";
+"Move to Bottom Right" = "移到底部右侧";
+
+"Could not move the editor tab. Its content could not be synchronized." = "无法移动编辑标签，未能同步其内容。";

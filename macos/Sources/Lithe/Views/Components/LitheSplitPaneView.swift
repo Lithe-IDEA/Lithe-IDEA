@@ -39,7 +39,6 @@ struct LitheSplitPaneView<Sized: View, Flexible: View>: View {
     let trackBackground: Color
     let dividerColor: Color
     let showsIdleDivider: Bool
-    let highlightsOnHover: Bool
     /// Called with the final size when a drag ends. Hosts that persist the size
     /// write it here; the container then defers to `defaultSize` again so the
     /// persisted value is the single source of truth.
@@ -65,7 +64,6 @@ struct LitheSplitPaneView<Sized: View, Flexible: View>: View {
         trackBackground: Color = .clear,
         dividerColor: Color = LitheTheme.divider,
         showsIdleDivider: Bool = true,
-        highlightsOnHover: Bool = true,
         onCommit: ((CGFloat) -> Void)? = nil,
         @ViewBuilder sized: () -> Sized,
         @ViewBuilder flexible: () -> Flexible
@@ -81,7 +79,6 @@ struct LitheSplitPaneView<Sized: View, Flexible: View>: View {
         self.trackBackground = trackBackground
         self.dividerColor = dividerColor
         self.showsIdleDivider = showsIdleDivider
-        self.highlightsOnHover = highlightsOnHover
         self.onCommit = onCommit
         self.sized = sized()
         self.flexible = flexible()
@@ -155,7 +152,6 @@ struct LitheSplitPaneView<Sized: View, Flexible: View>: View {
             trackBackground: trackBackground,
             dividerColor: dividerColor,
             showsIdleDivider: showsIdleDivider,
-            highlightsOnHover: highlightsOnHover,
             onDragStarted: {
                 dragStart = size
                 isDragging = true

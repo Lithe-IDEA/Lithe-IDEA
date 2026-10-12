@@ -79,6 +79,7 @@ extension AppModel {
             if newValue != nil { editorTabOrderFeature.repositoryDiffSelected = false }
             let previousDocumentID = documentFeature.activeDocumentID
             documentFeature.activeDocumentID = newValue
+            if let newValue { editorTabOrderFeature.focus(.document(newValue)) }
             guard previousDocumentID != newValue else { return }
             activateCurrentDocumentLanguageServerIfAvailable()
         }
@@ -96,6 +97,7 @@ extension AppModel {
 
     func selectRepositoryDiffTab() {
         guard editorTabOrderFeature.contains(.repositoryDiff) else { return }
+        editorTabOrderFeature.focus(.repositoryDiff)
         if !editorTabOrderFeature.repositoryDiffSelected {
             editorTabOrderFeature.repositoryDiffReturnTab = activeEditorTerminalSession.map { .terminal($0.id) }
                 ?? activeMediaDocument.map { .media($0.id) } ?? activeDocument.map { .document($0.id) }
@@ -133,6 +135,30 @@ extension AppModel {
             : editorTabOrderFeature.move(item, before: target)
         guard moved else { return }
 
+        selectEditorTab(item)
+    }
+
+    func moveEditorTab(_ item: EditorTabItem, toGroup group: UUID, side: EditorGroupDropSide) {
+        let requestID = UUID()
+        editorTabOrderFeature.groupDropRequestID = requestID
+        let layout = editorTabOrderFeature.groupLayout
+        let commit: (Result<Void, Error>) -> Void = { [weak self] result in
+            guard let self, self.editorTabOrderFeature.groupDropRequestID == requestID,
+                  self.editorTabOrderFeature.groupLayout == layout,
+                  !self.documentFeature.hasPendingDocumentClose,
+                  self.editorTabOrderFeature.contains(item) else { return }
+            guard case .success = result else {
+                self.showNotification(String(localized: "Could not move the editor tab. Its content could not be synchronized."))
+                return
+            }
+            if self.editorTabOrderFeature.drop(item, into: group, side: side) { self.selectEditorTab(item) }
+        }
+        if case .document(let id) = item, let document = openDocuments.first(where: { $0.id == id }) {
+            document.withSynchronizedEditor(commit)
+        } else { commit(.success(())) }
+    }
+
+    func selectEditorTab(_ item: EditorTabItem) {
         switch item {
         case .repositoryDiff:
             selectRepositoryDiffTab()

@@ -159,7 +159,7 @@ struct ChangesSidebarView: View {
             }
             Spacer()
             GitPatchToolbar(feature: feature)
-            LitheSidebarHideButton(title: "Commit") { workbench.hideSidebar() }
+            LitheSidebarHideButton(title: "Commit") { workbench.setVisibility(.changes, isVisible: false) }
         }
         // Islands: 4pt layout start + 4pt inset of the painted tab.
         .padding(.leading, 8)
@@ -195,7 +195,6 @@ struct ChangesSidebarView: View {
                     minimum: minimumCommitHeight,
                     maximum: maximumCommitHeight,
                     dividerColor: LitheTheme.toolWindowBorder(for: colorScheme),
-                    highlightsOnHover: false,
                     sized: {
                         CommitAreaView(feature: feature, draft: draft, commitWorkflow: commitWorkflow,
                                        hasBackgroundImage: hasBackgroundImage, showSettings: showSettings)

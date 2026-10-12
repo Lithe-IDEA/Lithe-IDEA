@@ -187,6 +187,7 @@ struct EditorAreaView: View {
             ?? model.activeMediaDocument.map { .media($0.id) }
             ?? model.activeDocument.map { .document($0.id) }
     }
+    private var editorGroupIsActive: Bool { editorIsActive && (groupID == nil || paneItem == activeItem) }
     private var paneItems: [EditorTabItem] {
         groupID.map { model.editorTabOrderFeature.items(in: $0) } ?? model.editorTabItems
     }
@@ -448,7 +449,7 @@ struct EditorAreaView: View {
                 .allowsHitTesting(selected || hoveredTabItem == item)
         }
         .foregroundStyle(selected ? LitheTheme.primaryText : LitheTheme.secondaryText)
-        .modifier(LitheToolWindowTabStyle(isSelected: selected, isActive: editorIsActive))
+        .modifier(LitheToolWindowTabStyle(isSelected: selected, isActive: editorGroupIsActive))
         .padding(.horizontal, 4).padding(.vertical, 4)
         .onHover { updateHoveredTab(item, isHovering: $0) }
         .background { editorTabFrameReader(for: item) }
@@ -476,7 +477,7 @@ struct EditorAreaView: View {
                 .allowsHitTesting(selected || hoveredTabItem == .repositoryDiff)
         }
         .foregroundStyle(selected ? LitheTheme.primaryText : LitheTheme.secondaryText)
-        .modifier(LitheToolWindowTabStyle(isSelected: selected, isActive: editorIsActive))
+        .modifier(LitheToolWindowTabStyle(isSelected: selected, isActive: editorGroupIsActive))
         .padding(.horizontal, 4).padding(.vertical, 4)
         .onHover { updateHoveredTab(.repositoryDiff, isHovering: $0) }
         .help(title)
@@ -614,7 +615,7 @@ struct EditorAreaView: View {
         .onHover { isHovering in
             updateHoveredTab(tabItem, isHovering: isHovering)
         }
-        .modifier(LitheToolWindowTabStyle(isSelected: isActive, isActive: editorIsActive))
+        .modifier(LitheToolWindowTabStyle(isSelected: isActive, isActive: editorGroupIsActive))
         .padding(.horizontal, 4)
         .padding(.vertical, 4)
         .background { editorTabFrameReader(for: tabItem) }
@@ -666,7 +667,7 @@ struct EditorAreaView: View {
             .allowsHitTesting(isActive || hoveredTabItem == tabItem)
             .padding(.trailing, 4)
         }
-        .modifier(LitheToolWindowTabStyle(isSelected: isActive, isActive: editorIsActive))
+        .modifier(LitheToolWindowTabStyle(isSelected: isActive, isActive: editorGroupIsActive))
         .padding(.horizontal, 4)
         .padding(.vertical, 4)
         .background {
@@ -741,7 +742,7 @@ struct EditorAreaView: View {
             .allowsHitTesting(isActive || hoveredTabItem == .document(document.id))
             .padding(.trailing, 4)
         }
-        .modifier(LitheToolWindowTabStyle(isSelected: isActive, isActive: editorIsActive))
+        .modifier(LitheToolWindowTabStyle(isSelected: isActive, isActive: editorGroupIsActive))
         .padding(.horizontal, 4)
         .padding(.vertical, 4)
     }

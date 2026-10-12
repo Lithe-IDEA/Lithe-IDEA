@@ -66,6 +66,7 @@ package struct LanguageServerLaunchDescriptor: Hashable, Sendable {
     package let arguments: [String]
     package let validationArguments: [String]
     package let environment: [String: String]
+    package let runtimeTools: [String]
     package let initializationOptions: ToolingJSONValue?
 
     package init(
@@ -73,12 +74,14 @@ package struct LanguageServerLaunchDescriptor: Hashable, Sendable {
         arguments: [String] = [],
         validationArguments: [String] = [],
         environment: [String: String] = [:],
+        runtimeTools: [String] = [],
         initializationOptions: ToolingJSONValue? = nil
     ) {
         self.executableNames = executableNames
         self.arguments = arguments
         self.validationArguments = validationArguments
         self.environment = environment
+        self.runtimeTools = runtimeTools
         self.initializationOptions = initializationOptions
     }
 }

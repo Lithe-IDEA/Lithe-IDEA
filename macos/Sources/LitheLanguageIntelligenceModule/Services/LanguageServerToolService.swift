@@ -166,6 +166,13 @@ package final class LanguageServerToolService: ObservableObject {
         return result
     }
 
+    /// True while a provider that requires an executable probe has not been
+    /// probed yet, so `candidates(for:)` is empty only because no check ran.
+    package func needsCandidateValidation(for descriptor: LanguageProviderDescriptor) -> Bool {
+        validatedCandidates[descriptor.id] == nil
+            && descriptor.languageServerLaunch?.validationArguments.isEmpty == false
+    }
+
     package func executableURL(for descriptor: LanguageProviderDescriptor) -> URL? {
         candidates(for: descriptor).first?.executableURL
     }
@@ -286,7 +293,9 @@ package final class LanguageServerToolService: ObservableObject {
         let operationID = "lsp-validate-\(descriptor.id)-\(UUID().uuidString)"
         let runner = commandRunner
         let executableURL = candidate.executableURL
-        let environment = runtimeService.languageToolProcessEnvironment()
+        let environment = runtimeService.languageToolProcessEnvironment(
+            runtimeTools: descriptor.languageServerLaunch?.runtimeTools ?? []
+        )
         let result = await Task.detached(priority: .userInitiated) {
             runner.runLanguageToolCommand(
                 operationID: operationID,

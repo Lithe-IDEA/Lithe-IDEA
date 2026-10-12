@@ -248,10 +248,27 @@ extension AppModel {
             },
             openFile: { [weak self] destination in
                 guard let self else { return }
+                // Definitions often live outside the project: Go's standard
+                // library, a module cache, or stubs inside a language-server
+                // package. Show them read-only instead of refusing the jump.
+                let isOutsideWorkspace = self.workspaceURL.map {
+                    self.workspaceRelativePath(for: destination.url, root: $0) == nil
+                } ?? false
+                if isOutsideWorkspace {
+                    let languageID = self.languageNavigationCoordinator.state.providerID
+                        ?? self.focusedEditorDocument.flatMap {
+                            self.languageProviderCatalog.provider(for: $0.url)?.id
+                        }
+                    guard self.isExternalNavigationSource(destination.url, languageID: languageID) else {
+                        self.showNotification("Only source files of the current language can be opened from outside the workspace")
+                        return
+                    }
+                }
                 self.openFile(
                     destination.url,
-                    isReadOnly: destination.isReadOnly,
-                    displayPath: destination.displayPath
+                    isReadOnly: destination.isReadOnly || isOutsideWorkspace,
+                    displayPath: destination.displayPath,
+                    allowsOutsideWorkspace: isOutsideWorkspace
                 )
             },
             openVirtualDocument: { [weak self] url, text, displayPath in
@@ -498,6 +515,12 @@ extension AppModel {
                 }
             }
         )
+    }
+
+    func isExternalNavigationSource(_ url: URL, languageID: String?) -> Bool {
+        LanguageNavigationCoordinator.allowsExternalSource(url, languageID: languageID) {
+            self.languageProviderCatalog.provider(for: $0)?.id
+        }
     }
 
     func presentLanguageNavigationResults(_ kind: LanguageNavigationResultKind) {

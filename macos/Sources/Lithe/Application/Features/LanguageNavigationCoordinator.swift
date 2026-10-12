@@ -199,6 +199,20 @@ final class LanguageNavigationCoordinator: ObservableObject {
         }
     }
 
+    /// A jump may leave the workspace only into a source file of the language
+    /// that produced it: a Go definition opens `.go` files, a PHP definition
+    /// `.php` files. Configuration, credentials, and other files a server
+    /// might point to stay closed, and a symlink must resolve to a file that
+    /// passes the same check. Such files are always opened read-only.
+    nonisolated static func allowsExternalSource(
+        _ url: URL,
+        languageID: String?,
+        languageOf: (URL) -> String?
+    ) -> Bool {
+        guard let languageID, url.isFileURL else { return false }
+        return [url, url.resolvingSymlinksInPath()].allSatisfy { languageOf($0) == languageID }
+    }
+
     func editorLocation(
         for location: LanguageNavigationLocation,
         virtualProviderID: String?

@@ -4,12 +4,12 @@ import Testing
 
 struct MacRuntimeToolDiscoveryTests {
     @Test
-    func prefersTheExecutableOwnedByTheInstalledPHPPlugin() throws {
+    func prefersTheExecutablePackagedByAnInstalledPlugin() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("lithe-php-tool-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let executable = root.appendingPathComponent("bin/intelephense")
+        let executable = root.appendingPathComponent("language-server/bin/intelephense")
         try FileManager.default.createDirectory(
             at: executable.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -23,7 +23,11 @@ struct MacRuntimeToolDiscoveryTests {
         let discovery = MacRuntimeToolDiscovery(
             homeDirectoryURL: root,
             resourceDirectoryURL: nil,
-            pluginToolRoots: [root]
+            pluginTools: [PluginPackagedTool(
+                command: "intelephense",
+                executableURL: executable,
+                pluginDisplayName: "PHP Support"
+            )]
         )
         let candidates = discovery.candidates(
             for: "intelephense",
@@ -33,6 +37,8 @@ struct MacRuntimeToolDiscoveryTests {
 
         #expect(candidates.first?.executableURL == executable.standardizedFileURL)
         #expect(candidates.first?.source == .bundled)
-        #expect(candidates.first?.detail == "PHP Support plugin")
+        #expect(candidates.first?.detail == "PHP Support")
+        // A packaged tool answers only for its own command name.
+        #expect(discovery.candidates(for: "gopls", projectURL: nil, environment: [:]).isEmpty)
     }
 }

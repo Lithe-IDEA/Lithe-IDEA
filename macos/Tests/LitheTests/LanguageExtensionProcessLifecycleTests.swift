@@ -2,7 +2,6 @@ import Darwin
 import Foundation
 import LitheApplicationKernel
 import LitheCoreContracts
-import LitheGoSupportModule
 import LitheModuleAPI
 import Testing
 @testable import Lithe
@@ -10,6 +9,8 @@ import Testing
 @Suite("Language extension process lifecycle")
 @MainActor
 struct LanguageExtensionProcessLifecycleTests {
+    /// The declarative Go plugin's execution module is host-owned, so
+    /// disabling it must still terminate the process it started.
     @Test
     func disablingGoExecutionTerminatesItsOwnedMacProcess() async throws {
         let sleepURL = URL(fileURLWithPath: "/bin/sleep")
@@ -22,9 +23,12 @@ struct LanguageExtensionProcessLifecycleTests {
         try runtime.register(ModuleFactory(manifest: workspace) {
             ProcessLifecycleWorkspaceModule(manifest: workspace)
         })
-        try runtime.register(ModuleFactory(manifest: GoExecutionModule.moduleManifest) {
-            GoExecutionModule(executionHost: executionHost)
-        })
+        for factory in try DeclarativePluginTestSupport.officialFactories(
+            "GoSupport",
+            executionHost: executionHost
+        ) {
+            try runtime.register(factory)
+        }
         try await runtime.setEnabled(true, for: .languageExecutionExtension("go"))
 
         let capability = try #require(
@@ -37,7 +41,7 @@ struct LanguageExtensionProcessLifecycleTests {
             executablePath: sleepURL.path,
             arguments: ["30"]
         ))
-        let moduleID = GoExecutionModule.moduleManifest.id
+        let moduleID = ModuleID.languageExecutionExtension("go")
         let pid = try #require(processRegistry.processIDs(for: moduleID).first)
         #expect(Darwin.kill(pid, 0) == 0)
 
@@ -46,6 +50,35 @@ struct LanguageExtensionProcessLifecycleTests {
         #expect(processRegistry.processIDs(for: moduleID).isEmpty)
         #expect(try runtime.snapshot(for: moduleID).state == .disabled)
         #expect(await processExited(pid))
+    }
+
+    /// gopls runs `go` itself, so the declared runtime must reach the
+    /// launch configuration the host uses to build the server's PATH.
+    @Test
+    func goLanguageServerDeclaresTheGoRuntime() async throws {
+        let runtime = ModuleRuntime()
+        let workspace = BuiltInModuleCatalog.manifest(for: .workspace)!
+        try runtime.register(ModuleFactory(manifest: workspace) {
+            ProcessLifecycleWorkspaceModule(manifest: workspace)
+        })
+        for factory in try DeclarativePluginTestSupport.officialFactories(
+            "GoSupport",
+            executionHost: MacLanguageExecutionHost(processRegistry: ManagedProcessRegistry())
+        ) {
+            try runtime.register(factory)
+        }
+        let moduleID = ModuleID.languageServerExtension("go")
+        try await runtime.setEnabled(true, for: moduleID)
+
+        let provider = try #require(
+            try await runtime.activateCapability(.languageServerExtension("go"))
+                as? any LanguageServerExtensionProviding
+        )
+
+        #expect(provider.configuration.executableNames == ["gopls"])
+        #expect(provider.configuration.validationArguments == ["version"])
+        #expect(provider.configuration.runtimeTools == ["go"])
+        try await runtime.setEnabled(false, for: moduleID)
     }
 
     private func processExited(_ pid: Int32) async -> Bool {

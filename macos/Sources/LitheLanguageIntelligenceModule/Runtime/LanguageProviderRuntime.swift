@@ -99,7 +99,9 @@ package final class StdioLanguageProviderRuntime: LanguageProviderRuntime {
             runtimeUnavailableMessage = message
             return nil
         }
-        var environment = runtimeService.languageToolProcessEnvironment()
+        var environment = runtimeService.languageToolProcessEnvironment(
+            runtimeTools: languageServerLaunch.runtimeTools
+        )
         environment.merge(languageServerLaunch.environment) { _, configured in configured }
         return LanguageServerRuntimeSession(
             providerID: descriptor.id,

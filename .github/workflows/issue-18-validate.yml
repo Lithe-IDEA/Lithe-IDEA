@@ -36,11 +36,14 @@ jobs:
           patch = lzma.decompress(base64.b64decode(b''.join(parts)))
           assert hashlib.sha256(patch).hexdigest() == '0422220947a77ae1fea91991834e33c32101d3026a260f55ff33d030fb305f42', 'Source patch digest mismatch'
           pathlib.Path(os.environ['RUNNER_TEMP'], 'issue-18.patch').write_bytes(patch)
+          finalizer = subprocess.check_output(['git', 'show', os.environ['SOURCE_SHA'] + ':.github/issue-18-finalize.py'])
+          pathlib.Path(os.environ['RUNNER_TEMP'], 'issue-18-finalize.py').write_bytes(finalizer)
           PY
           test "$(git rev-parse origin/preview)" = ddd99cc69cf0f72e5ec07cbd7c4e84429f46073e
           git switch --detach ddd99cc69cf0f72e5ec07cbd7c4e84429f46073e
           git apply --check "$RUNNER_TEMP/issue-18.patch"
           git apply "$RUNNER_TEMP/issue-18.patch"
+          python3 "$RUNNER_TEMP/issue-18-finalize.py"
           python3 - <<'PY'
           from pathlib import Path
           p = Path('.agents/skills/write-stable-tests/scripts/test-stability-windows.ps1')
@@ -63,7 +66,7 @@ jobs:
       - name: Compile and time every extra codec test
         run: node .agents/skills/write-stable-tests/scripts/run-rust-tests-with-timing.mjs --manifest Plugins/win/Official/CommonEncodings/native/Cargo.toml --package lithe-common-encodings --suite-timeout-ms 120000 --report .artifacts/test-stability/issue18-codecs-linux.json
       - name: Check the host dependency graph and update its lockfile
-        run: cargo check --manifest-path windows/tauri/src-tauri/Cargo.toml -p lithe-project
+        run: cargo check --quiet --manifest-path windows/tauri/src-tauri/Cargo.toml -p lithe-project
       - name: Install locked frontend dependencies
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Type-check the Windows frontend
@@ -80,7 +83,7 @@ jobs:
         shell: bash
         run: |
           git apply --numstat "$RUNNER_TEMP/issue-18.patch" | cut -f3 | xargs -d '\n' git add --
-          git add windows/tauri/src-tauri/Cargo.lock
+          git add windows/tauri/src-tauri/Cargo.lock .github/workflows/ci-windows.yml
           node scripts/verify-agent-notes.mjs
           ./scripts/verify-windows-boundaries.sh
           ./scripts/verify-runtime-bundle-immutability.sh
@@ -90,10 +93,10 @@ jobs:
           ./scripts/verify-platform-feature-matrix.sh
           node .agents/skills/write-stable-tests/scripts/verify-test-stability.mjs --platform all --base ddd99cc69cf0f72e5ec07cbd7c4e84429f46073e
           git diff --check ddd99cc69cf0f72e5ec07cbd7c4e84429f46073e HEAD
+          git bundle create "$RUNNER_TEMP/issue-18-reviewed.bundle" HEAD ^ddd99cc69cf0f72e5ec07cbd7c4e84429f46073e
           gh auth setup-git
           git push origin HEAD:refs/heads/fix/issue-18-utf16-common-encodings
           echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          git bundle create "$RUNNER_TEMP/issue-18-reviewed.bundle" HEAD ^ddd99cc69cf0f72e5ec07cbd7c4e84429f46073e
       - name: Upload validation reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -103,10 +106,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
       - name: Upload exact reviewed source delta
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: issue-18-reviewed-source
           path: ${{ runner.temp }}/issue-18-reviewed.bundle
+          if-no-files-found: ignore
           retention-days: 1
 
   windows:

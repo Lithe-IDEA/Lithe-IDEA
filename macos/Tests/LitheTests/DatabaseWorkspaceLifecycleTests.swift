@@ -436,7 +436,84 @@ struct DatabaseWorkspaceLifecycleTests {
             #expect(await feature.apply(drafts: [], insertedRows: feature.tableInsertedRows, deletedIndexes: []) == true)
         }
         #expect(runner.applyRequests == 1)
-        #expect(runner.pageRequests == pagesBeforeCompletion + ((destination == "stay" && !fails) || destination == "returnToConnection" ? 1 : 0))
+        #expect(runner.pageRequests == pagesBeforeCompletion + ((destination == "stay" && !fails) || ["otherTable", "returnToTable", "returnToConnection"].contains(destination) ? 1 : 0))
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func sidebarTableSelectionDuringApplyLoadsLastSelection(returnToFirst: Bool, fails: Bool) async throws {
+        let preferences = DatabaseLifecyclePreferences()
+        let store = DatabaseConnectionStore(store: preferences, secureStore: DatabaseLifecycleSecrets())
+        let profile = DatabaseProfile(name: "Sidebar apply fixture", kind: .mongodb, database: "fixture")
+        try store.save([profile])
+        let settings = AppSettings(store: preferences)
+        let model = AppModel(settings: settings, services: MacServiceContainer(store: preferences, settings: settings, moduleLaunchMode: .safeMode).services)
+        let runner = GatedDatabaseApplyRunner(fails: fails)
+        let feature = DatabaseFeatureModel(operations: DatabaseSidecarService(processRunner: runner, executableURL: URL(fileURLWithPath: "/fixture/database")), connectionStore: store)
+        defer { runner.release.open(); feature.prepareForModuleRelease() }
+        model.cacheModuleCapability(DatabaseModuleCapability(feature: feature), id: .databaseWorkspace, moduleID: .database)
+        feature.activateProfile(profile)
+        await feature.openTable("customers")
+        let task = Task { await feature.apply(drafts: [], insertedRows: [["name": .string("A")]], deletedIndexes: []) }
+        #expect(await runner.entered.waitUntilOpen())
+        // Use the same synchronous navigation + scheduled I/O entry as the sidebar click.
+        model.selectDatabaseWorkspace(profileID: profile.id, table: "orders")
+        if returnToFirst { model.selectDatabaseWorkspace(profileID: profile.id, table: "customers") }
+        let expectedTable = returnToFirst ? "customers" : "orders"
+        #expect(feature.selectedTable == expectedTable)
+        #expect(feature.rows.isEmpty) // Never display the old page under the newly selected table.
+        #expect(feature.isLoading && feature.isApplyingTableEdits)
+        runner.release.open()
+        #expect(await task.value == !fails)
+        #expect(await awaitChange(on: feature, until: { !feature.isLoading && !feature.rows.isEmpty }))
+        #expect(feature.selectedTable == expectedTable)
+        #expect(feature.rows.first?["name"] == .string(expectedTable))
+        #expect(!feature.isApplyingTableEdits)
+        #expect(runner.applyRequests == 1)
+        await model.shutdownProjectSession()
+    }
+
+    @Test(arguments: ["execute", "query"], [(false, false), (false, true), (true, false), (true, true)])
+    func sqlExecutionLockSurvivesConnectionNavigation(method: String, scenario: (Bool, Bool)) async throws {
+        let (returnBeforeCompletion, fails) = scenario
+        let store = DatabaseConnectionStore(store: DatabaseLifecyclePreferences(), secureStore: DatabaseLifecycleSecrets())
+        let first = DatabaseProfile(name: "SQL A", kind: .sqlite, database: "first")
+        let second = DatabaseProfile(name: "SQL B", kind: .sqlite, database: "second")
+        try store.save([first, second])
+        let recoveryRoot = FileManager.default.temporaryDirectory.appendingPathComponent("lithe-navigation-sql-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: recoveryRoot) }
+        let runner = GatedSQLNavigationRunner(method: method, fails: fails)
+        let feature = DatabaseFeatureModel(
+            operations: DatabaseSidecarService(processRunner: runner, executableURL: URL(fileURLWithPath: "/fixture/database")),
+            connectionStore: store, recoveryStore: MacDatabaseRecoveryStore(rootURL: recoveryRoot), fileStorage: MacFileStorage()
+        )
+        defer { runner.release.open(); feature.prepareForModuleRelease() }
+        await feature.select(first)
+        feature.addSQLTab(sql: method == "execute" ? "INSERT INTO items VALUES (1)" : "SELECT 1")
+        let tabID = try #require(feature.selectedSQLTabID)
+        let task = Task { await feature.runSQL(in: tabID) }
+        #expect(await runner.entered.waitUntilOpen())
+        await feature.select(second)
+        #expect(!feature.isLoading)
+        #expect(feature.hasActiveModuleWork)
+        #expect(feature.sqlTab(tabID, profileID: first.id)?.isRunning == true)
+        if returnBeforeCompletion {
+            await feature.select(first)
+            #expect(feature.selectedSQLTab?.isRunning == true)
+            await feature.runSQL(in: tabID)
+            #expect(runner.requests == 1)
+        }
+        runner.release.open()
+        await task.value
+        #expect(!feature.hasActiveModuleWork)
+        #expect(feature.sqlTab(tabID, profileID: first.id)?.isRunning == false)
+        if !returnBeforeCompletion { await feature.select(first) }
+        #expect(feature.selectedSQLTab?.isRunning == false)
+        #expect(feature.selectedSQLTab?.result == nil) // Stale completion never repopulates a restored page.
+        #expect(runner.requests == 1)
+        await feature.runSQL(in: tabID)
+        #expect(runner.requests == 2) // A new execution is allowed only after the provider actually finished.
+        #expect((feature.selectedSQLTab?.errorMessage != nil) == fails)
+        #expect(!feature.hasActiveModuleWork)
     }
 
     @Test(arguments: ["stay", "otherTable", "otherConnection", "newerPage"], [false, true])
@@ -1307,6 +1384,48 @@ private struct GatedDatabasePageRunner: DatabaseProcessRunning {
     }
 }
 
+private final class GatedSQLNavigationRunner: DatabaseProcessRunning, @unchecked Sendable {
+    let method: String
+    let fails: Bool
+    let entered = TestGate()
+    let release = TestGate()
+    private let lock = NSLock()
+    private var count = 0
+    var requests: Int { lock.withLock { count } }
+    init(method: String, fails: Bool) { self.method = method; self.fails = fails }
+
+    func runDatabaseProcess(_ request: DatabaseProcessRequest) -> DatabaseProcessResult {
+        guard let data = request.standardInput,
+              let input = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = input["id"] as? String else {
+            return DatabaseProcessResult(output: "Invalid fixture request", exitCode: 1)
+        }
+        if input["method"] as? String == "exportSqlToFile",
+           let params = input["params"] as? [String: Any], let path = params["outputPath"] as? String {
+            do {
+                try Data().write(to: URL(fileURLWithPath: path))
+                let response: [String: Any] = ["id": id, "ok": true, "result": ["path": path, "byteCount": 0,
+                    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]]
+                return DatabaseProcessResult(output: String(decoding: try JSONSerialization.data(withJSONObject: response), as: UTF8.self), exitCode: 0)
+            } catch { return DatabaseProcessResult(output: error.localizedDescription, exitCode: 1) }
+        }
+        if input["method"] as? String == method {
+            lock.withLock { count += 1 }
+            entered.open()
+            // Block only the synchronous provider worker; the test owns release and a bounded deadline.
+            guard release.waitSynchronously(timeout: 5) else {
+                Issue.record("SQL navigation test did not release its request")
+                return DatabaseProcessResult(output: "Fixture deadline exceeded", exitCode: 1)
+            }
+            if fails { return DatabaseProcessResult(output: "Fixture SQL failed", exitCode: 1) }
+            if method == "execute" {
+                return DatabaseProcessResult(output: "{\"id\":\"\(id)\",\"ok\":true,\"result\":{\"rowsAffected\":1}}", exitCode: 0)
+            }
+        }
+        return TableEditsWorkspaceRunner().runDatabaseProcess(request)
+    }
+}
+
 private final class GatedDatabaseApplyRunner: DatabaseProcessRunning, @unchecked Sendable {
     let fails: Bool
     let entered = TestGate()
@@ -1322,7 +1441,17 @@ private final class GatedDatabaseApplyRunner: DatabaseProcessRunning, @unchecked
         guard let data = request.standardInput,
               let input = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let id = input["id"] as? String else { return DatabaseProcessResult(output: "Invalid fixture", exitCode: 1) }
-        if input["method"] as? String == "pageTable" { lock.withLock { pages += 1 } }
+        if input["method"] as? String == "pageTable" {
+            lock.withLock { pages += 1 }
+            let params = input["params"] as? [String: Any]
+            let table = params?["table"] as? String ?? ""
+            let response: [String: Any] = ["id": id, "ok": true, "result": ["columns": ["id", "name"],
+                "rows": [["id": 1, "name": table], ["id": 2, "name": table]], "truncated": false, "totalRows": 2]]
+            guard let data = try? JSONSerialization.data(withJSONObject: response) else {
+                return DatabaseProcessResult(output: "Invalid fixture page", exitCode: 1)
+            }
+            return DatabaseProcessResult(output: String(decoding: data, as: UTF8.self), exitCode: 0)
+        }
         guard input["method"] as? String == "applyChanges" else { return TableEditsWorkspaceRunner().runDatabaseProcess(request) }
         lock.withLock { applies += 1 }
         entered.open()

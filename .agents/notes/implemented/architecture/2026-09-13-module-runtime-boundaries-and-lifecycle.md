@@ -155,6 +155,10 @@ SQL 插件实现，不能把截图的完整专用工具栏宣称为 Community �
 `backgroundConnectionManagementPreservesEditorSelection` 和
 `removingConnectionClosesOwnedTabsAndFallsBack` 验证后台管理和删除回退。
 
+侧栏点击和 AppModel 的同步选表都通过 `DatabaseFeatureModel.selectTable`，由 Feature 清理旧页并记录目标。当前连接正在提交时复用延后刷新集合，写入结束释放锁后才加载最后选择的表；不能先在 View 改 `selectedTable`，再依赖 `openTable` 对比旧表。`sidebarTableSelectionDuringApplyLoadsLastSelection` 覆盖真实 AppModel 入口的 A→B、A→B→A 和写入成功/失败，核对最终表名、页面内容和 Loading。延后刷新属于新的导航请求，不让旧提交的结果直接覆盖目标页。
+
+SQL 的在途执行按连接 ID 和查询标签 ID 独立记录，不能从当前可见标签的 `isRunning` 推断后台是否结束。切换连接仅清除呈现结果，保留运行状态；执行函数在真实 Provider 返回或准备阶段退出后统一释放锁，并同步可见标签和保存的标签状态。模块忙闲判断检查全部连接的在途 SQL，返回 A 后重复 Run 必须被拒绝。代次检查仍丢弃迟到结果、停止批次的后续语句，不承诺撤销已发送的写入；关闭标签或强制模块释放也不能伪造后台请求已结束。`sqlExecutionLockSurvivesConnectionNavigation` 用有界 TestGate 覆盖写入/查询、成功/失败，以及完成前/后返回 A，核对只发送一次请求、后台占用与最终解锁。
+
 显式分页、筛选、排序和刷新由模型在接纳结果时清理所属草稿，连接代次、表名和页面请求 ID 必须仍匹配；视图只在发起操作时清理局部选择与焦点。不要在视图的 await 后无条件调用 discard：A 的分页尚未完成时切到 B 并编辑，旧回调会误删 B 的共享草稿。`delayedPageOnlyClearsItsOwnCurrentDrafts` 以有界 TestGate 覆盖成功/失败、切表、切连接和被更新分页替代的时序。
 
 不采用每张表独立标签、每个标签复制一个模块或永久缓存完整结果集：它们分别带来

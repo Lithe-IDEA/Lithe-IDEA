@@ -602,7 +602,6 @@ struct DatabaseSidebarView: View {
                     let isExpanded = expandedTableKey == tableKey
                     Button {
                         expandedTableKey = isExpanded ? nil : tableKey
-                        feature.selectedTable = table
                         openTable(profile, table: table, section: .data)
                     } label: {
                         HStack(spacing: LitheTheme.Tree.iconTextGap) {

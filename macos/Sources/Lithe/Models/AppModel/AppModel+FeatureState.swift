@@ -146,7 +146,7 @@ extension AppModel {
         if let profileID, let profile = feature.profiles.first(where: { $0.id == profileID }) {
             let needsRefresh = refresh || feature.selectedProfileID != profileID
             if feature.selectedProfileID != profileID { feature.activateProfile(profile) }
-            if let table { feature.selectedTable = table }
+            if let table { feature.selectTable(table) }
             // Navigation belongs to the click, not the completion of database I/O.
             openDatabaseWorkspace(queryID: queryID)
             if (needsRefresh || table != nil), profile.kind.supportsDataGrid {

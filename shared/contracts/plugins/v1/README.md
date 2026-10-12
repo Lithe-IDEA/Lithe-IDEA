@@ -55,9 +55,11 @@ part of it.
 
 ### Languages
 
-`id` is lowercase (`[a-z0-9+_-]`). `fileExtensions` (without a leading dot),
-`fileNames`, and `projectFileNames` are matched case-insensitively; at least
-one must be present. Optional `dependencies` lists `managementFileNames`,
+`id` is lowercase (`[a-z0-9+_-]`). `fileExtensions`, `fileNames`, and
+`projectFileNames` are matched case-insensitively; at least one must be
+present. A leading dot is optional only in `fileExtensions` (`.php` equals
+`php`). In complete file names, project markers, and management file names it
+is part of the name, so `.toolrc` and `.env.example` stay hidden-file names. Optional `dependencies` lists `managementFileNames`,
 `projectDependencyPaths`, and `projectBinaryPaths` relative to the project.
 
 ### Language servers

@@ -73,6 +73,8 @@ package final class StdioLanguageProviderRuntime: LanguageProviderRuntime {
         guard let languageServerLaunch else { return nil }
         let executableURL = if let languageServerExecutableResolver {
             languageServerExecutableResolver(descriptor)
+        } else if let pinned = languageServerLaunch.executableURL {
+            runtimeService.executableURL(at: pinned.path)
         } else {
             languageServerLaunch.executableNames.lazy.compactMap({
                 self.runtimeService.executableOnPath($0)

@@ -81,6 +81,66 @@ struct LanguageExtensionProcessLifecycleTests {
         try await runtime.setEnabled(false, for: moduleID)
     }
 
+    /// Two plugins may ship a server with the same file name. Each must be
+    /// pinned to the executable inside its own package, never found by name.
+    @Test
+    func packagedServersArePinnedToTheirOwnPackage() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lithe-packaged-servers-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = ModuleRuntime()
+        let workspace = BuiltInModuleCatalog.manifest(for: .workspace)!
+        try runtime.register(ModuleFactory(manifest: workspace) {
+            ProcessLifecycleWorkspaceModule(manifest: workspace)
+        })
+        var packages: [String: URL] = [:]
+        var installed: [InstalledPluginPackage] = []
+        for language in ["alpha", "beta"] {
+            let manifest = DeclarativePluginTestSupport.manifestObject(
+                id: "dev.example.\(language)",
+                version: PluginVersion(major: 1, minor: 0, patch: 0),
+                languageID: language,
+                packagedLauncher: "bin/language-server"
+            )
+            let packageURL = try DeclarativePluginTestSupport.writePackage(
+                at: root.appendingPathComponent(language, isDirectory: true),
+                manifest: manifest
+            )
+            let descriptor = try DeclarativePluginTestSupport.descriptor(manifest)
+            packages[language] = packageURL
+            installed.append(InstalledPluginPackage(
+                descriptor: descriptor,
+                installation: PluginInstallationRecord(
+                    pluginID: descriptor.id,
+                    activeVersion: descriptor.pluginManifest.version,
+                    origin: .localDevelopment
+                ),
+                packageURL: packageURL
+            ))
+        }
+        for factory in MacServiceContainer.declarativePluginFactories(
+            installed,
+            executionHost: MacLanguageExecutionHost(processRegistry: ManagedProcessRegistry()),
+            planner: DeclarativePluginTestSupport.operations
+        ) {
+            try runtime.register(factory)
+        }
+
+        for language in ["alpha", "beta"] {
+            let moduleID = ModuleID.languageServerExtension(language)
+            try await runtime.setEnabled(true, for: moduleID)
+            let provider = try #require(
+                try await runtime.activateCapability(.languageServerExtension(language))
+                    as? any LanguageServerExtensionProviding
+            )
+            let expected = try #require(packages[language])
+                .appendingPathComponent("bin/language-server").standardizedFileURL
+            #expect(provider.configuration.executableURL == expected)
+            #expect(provider.configuration.executableNames == ["language-server"])
+            try await runtime.setEnabled(false, for: moduleID)
+        }
+    }
+
     private func processExited(_ pid: Int32) async -> Bool {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(2))

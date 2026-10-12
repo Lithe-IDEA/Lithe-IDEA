@@ -1,26 +1,17 @@
 import Foundation
 
-/// An executable shipped inside an installed declarative plugin package.
-struct PluginPackagedTool: Equatable, Sendable {
-    let command: String
-    let executableURL: URL
-    let pluginDisplayName: String
-}
-
 /// macOS-only tool discovery.  It is deliberately a read-only adapter: it
 /// checks known locations and environment variables but never invokes a
 /// package manager or installs anything on the user's behalf.
 struct MacRuntimeToolDiscovery: RuntimeToolDiscovery {
     private let homeDirectoryURL: URL
     private let resourceDirectoryURL: URL?
-    private let pluginTools: [PluginPackagedTool]
     private let isExecutable: @Sendable (URL) -> Bool
     private let directoryNames: @Sendable (URL) -> [String]
 
     init(
         homeDirectoryURL: URL = FileManager.default.homeDirectoryForCurrentUser,
         resourceDirectoryURL: URL? = Bundle.main.resourceURL,
-        pluginTools: [PluginPackagedTool] = [],
         isExecutable: @escaping @Sendable (URL) -> Bool = {
             FileManager.default.isExecutableFile(atPath: $0.path)
         },
@@ -30,7 +21,6 @@ struct MacRuntimeToolDiscovery: RuntimeToolDiscovery {
     ) {
         self.homeDirectoryURL = homeDirectoryURL.standardizedFileURL
         self.resourceDirectoryURL = resourceDirectoryURL?.standardizedFileURL
-        self.pluginTools = pluginTools
         self.isExecutable = isExecutable
         self.directoryNames = directoryNames
     }
@@ -62,12 +52,6 @@ struct MacRuntimeToolDiscovery: RuntimeToolDiscovery {
                 source: .bundled,
                 detail: "Bundled with Lithe"
             )
-        }
-
-        // A declarative plugin's packaged language server is the version it
-        // was built and signed with, so it precedes copies found elsewhere.
-        for tool in pluginTools where tool.command == command {
-            add(tool.executableURL, source: .bundled, detail: tool.pluginDisplayName)
         }
 
         // Project-local toolchains are preferred because they are reproducible

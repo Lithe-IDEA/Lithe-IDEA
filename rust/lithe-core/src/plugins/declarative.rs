@@ -527,9 +527,9 @@ impl LanguageDeclaration {
                 "The language display name is empty.",
             ));
         }
-        self.file_extensions = normalized_names(&self.file_extensions, true);
-        self.file_names = normalized_names(&self.file_names, true);
-        self.project_file_names = normalized_names(&self.project_file_names, true);
+        self.file_extensions = normalized_extensions(&self.file_extensions);
+        self.file_names = normalized_names(&self.file_names);
+        self.project_file_names = normalized_names(&self.project_file_names);
         if self.file_extensions.is_empty()
             && self.file_names.is_empty()
             && self.project_file_names.is_empty()
@@ -553,7 +553,7 @@ impl LanguageDeclaration {
         }
         if let Some(dependencies) = &mut self.dependencies {
             dependencies.management_file_names =
-                normalized_names(&dependencies.management_file_names, true);
+                normalized_names(&dependencies.management_file_names);
             dependencies.project_dependency_paths =
                 sorted_unique(dependencies.project_dependency_paths.clone());
             dependencies.project_binary_paths =
@@ -657,8 +657,8 @@ impl ExecutionProviderDeclaration {
                     "The workspace test label is empty.",
                 ));
             }
-            test.project_markers = normalized_names(&test.project_markers, true);
-            test.test_file_patterns = normalized_names(&test.test_file_patterns, true);
+            test.project_markers = normalized_names(&test.project_markers);
+            test.test_file_patterns = normalized_names(&test.test_file_patterns);
             if test.project_markers.is_empty()
                 || test.project_markers.iter().any(|name| name.contains('/'))
             {
@@ -1164,19 +1164,30 @@ fn is_semantic_version(value: &str) -> bool {
         })
 }
 
-fn normalized_names(values: &[String], lowercase: bool) -> Vec<String> {
+/// Trims and lowercases complete file names and markers. A leading `.` is
+/// part of the name (`.toolrc`, `.env.example`) and is kept.
+fn normalized_names(values: &[String]) -> Vec<String> {
     sorted_unique(
         values
             .iter()
             .filter_map(|value| {
-                let mut name = value.trim().to_string();
-                if lowercase {
-                    name = name.to_lowercase();
-                }
-                if let Some(stripped) = name.strip_prefix('.') {
-                    name = stripped.to_string();
-                }
+                let name = value.trim().to_lowercase();
                 (!name.is_empty()).then_some(name)
+            })
+            .collect(),
+    )
+}
+
+/// Normalizes file extensions, where a leading `.` is optional notation:
+/// `.php` and `php` both declare the `php` extension.
+fn normalized_extensions(values: &[String]) -> Vec<String> {
+    let names = normalized_names(values);
+    sorted_unique(
+        names
+            .iter()
+            .filter_map(|name| {
+                let extension = name.strip_prefix('.').unwrap_or(name);
+                (!extension.is_empty()).then(|| extension.to_string())
             })
             .collect(),
     )

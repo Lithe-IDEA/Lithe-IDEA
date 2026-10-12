@@ -70,7 +70,7 @@ PHP 支持由用户选择安装和启用，主程序不携带 PHP 插件包、No
 - `./scripts/verify-macos-package.sh`：实际组装产物不得含 PHP 插件。
 - `./scripts/verify-official-plugins.sh`：独立包兼容性与签名验证。
 - `MacPluginPackageDownloaderTests`：验证 stable/preview 发行资产 URL 按 App 发布版本和架构确定性生成。
-- `MacRuntimeToolDiscoveryTests`：验证启用的 PHP 插件版本目录优先提供 Intelephense launcher。
+- `LanguageExtensionProcessLifecycleTests.packagedServersArePinnedToTheirOwnPackage`、`LanguageServerToolServiceTests.pinnedExecutableIsTheOnlyCandidate`：验证插件打包的 Intelephense 只从本插件已安装的版本目录启动，不按文件名在 PATH 或其他插件中查找。
 - `PluginPackageStoreTests/reinstallCanReplaceTheActiveVersionOnlyAfterValidation`：验证重装不会绕过签名校验，并在校验完成后替换当前版本。
 - `prepare-php-language-server.sh`：按 JSON 清单下载、校验并组装 Intelephense 运行包；插件版本目录删除时一并删除 launcher 和缓存文件。
 - `.github/workflows/release-macos.yml` 和 `.github/workflows/release-preview-macos.yml`：每个架构都发布 PHP 插件 zip；`LITHE_PLUGIN_PACKAGE_PRIVATE_KEY` 缺失或不匹配时工作流失败，避免发布无法被客户端识别的包。

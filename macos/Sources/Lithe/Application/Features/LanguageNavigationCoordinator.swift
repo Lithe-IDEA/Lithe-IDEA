@@ -18,6 +18,14 @@ struct LanguageNavigationRequest {
 /// superseded request cannot publish over a newer one: every completion handler
 /// checks `owns(operationID)` before writing, and only the coordinator can
 /// mint an operation ID.
+/// Where a language-server jump may go. Targets outside the workspace open
+/// read-only, and only when they are sources of the originating language.
+enum ExternalNavigationDecision: Equatable, Sendable {
+    case workspace
+    case externalReadOnly
+    case rejected
+}
+
 @MainActor
 final class LanguageNavigationCoordinator: ObservableObject {
     struct ImplementationFallbackDecision {
@@ -197,6 +205,25 @@ final class LanguageNavigationCoordinator: ObservableObject {
                 displayPath: $0.displayPath
             )
         }
+    }
+
+    /// Classifies a jump target by its real location. A path inside the
+    /// workspace that is a symlink to somewhere outside it counts as outside,
+    /// so it cannot bypass the source-file check or the read-only rule.
+    nonisolated static func externalNavigationDecision(
+        for url: URL,
+        workspaceURL: URL?,
+        languageID: String?,
+        languageOf: (URL) -> String?
+    ) -> ExternalNavigationDecision {
+        guard url.isFileURL, let workspaceURL else { return .workspace }
+        let root = workspaceURL.resolvingSymlinksInPath().path
+        if url.resolvingSymlinksInPath().path.hasPrefix(root + "/") {
+            return .workspace
+        }
+        return allowsExternalSource(url, languageID: languageID, languageOf: languageOf)
+            ? .externalReadOnly
+            : .rejected
     }
 
     /// A jump may leave the workspace only into a source file of the language

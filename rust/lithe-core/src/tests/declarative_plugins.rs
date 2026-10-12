@@ -69,6 +69,31 @@ fn validation_normalizes_order_and_spelling_without_touching_arguments() {
     );
 }
 
+/// A leading `.` is optional notation only for extensions. In complete file
+/// names and project markers it is part of the name, so hidden files such as
+/// `.toolrc` keep matching after normalization.
+#[test]
+fn validation_keeps_the_leading_dot_of_hidden_file_names() {
+    let mut manifest = fixture("go-support.plugin.json");
+    manifest["languages"][0]["fileExtensions"] = json!([".go"]);
+    manifest["languages"][0]["fileNames"] = json!([".toolrc"]);
+    manifest["languages"][0]["projectFileNames"] = json!(["go.mod", ".env.example"]);
+    manifest["executionProviders"][0]["test"]["projectMarkers"] = json!([".toolrc", "go.mod"]);
+    let outcome = validate(manifest);
+    assert_eq!(outcome["status"], "ok", "{outcome}");
+    let language = &outcome["plugin"]["languages"][0];
+    assert_eq!(language["fileExtensions"], json!(["go"]));
+    assert_eq!(language["fileNames"], json!([".toolrc"]));
+    assert_eq!(
+        language["projectFileNames"],
+        json!([".env.example", "go.mod"])
+    );
+    assert_eq!(
+        outcome["plugin"]["executionProviders"][0]["test"]["projectMarkers"],
+        json!([".toolrc", "go.mod"])
+    );
+}
+
 /// Every host must reject these manifests with the same stable code, so a
 /// package refused on one platform is never accepted by the other.
 #[test]

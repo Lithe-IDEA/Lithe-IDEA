@@ -157,6 +157,22 @@ package final class LanguageServerToolService: ObservableObject {
             seen.insert(executableURL.path)
         }
 
+        // A provider-pinned executable (a server packaged in its plugin) is
+        // never looked up by name, so two plugins shipping the same file name
+        // cannot start each other's server.
+        if let pinned = descriptor.languageServerLaunch?.executableURL {
+            if let executableURL = runtimeService.executableURL(at: pinned.path),
+               seen.insert(executableURL.path).inserted {
+                result.append(RuntimeToolCandidate(
+                    command: descriptor.languageServerLaunch?.executableNames.first ?? descriptor.id,
+                    executableURL: executableURL,
+                    source: .bundled,
+                    detail: "Packaged with \(descriptor.displayName)"
+                ))
+            }
+            return result
+        }
+
         for command in descriptor.languageServerLaunch?.executableNames ?? [] {
             for candidate in runtimeService.executableCandidates(command) {
                 guard seen.insert(candidate.executableURL.path).inserted else { continue }

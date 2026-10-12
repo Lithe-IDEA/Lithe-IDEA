@@ -33,7 +33,7 @@
 4. 每个 `packaged` 语言服务器入口必须是包内的普通可执行文件，不能是符号链接。
 5. `MacPluginStartupLoader` 只做静态校验（与内置清单的所有权冲突、模块依赖图），不加载代码。被接受的包无论是否启用都注册宿主模块，启用状态只决定能否激活，所以启用、禁用即时生效，不需要重启；只有启动后才安装的包需要重启才能进入模块图。
 6. `MacServiceContainer.declarativePluginFactories` 用声明配置通用的 `BundledLanguageServerModule` 和 `BundledLanguageExecutionModule`。运行/测试计划由 `DeclarativeLanguageExecutionCapability` 交给 Rust Core 展开；进程仍由模块的资源范围持有，禁用时一并停止。
-7. 打包的语言服务器通过 `MacRuntimeToolDiscovery` 的 `PluginPackagedTool` 按命令名提供，优先于 PATH；`systemCommand`（如 gopls）走普通工具发现。`runtimeDependencies` 声明的运行时（v1 支持 `node`、`go`）由宿主发现，导出为 `LITHE_<TOOL>_PATH`，并把所在目录放到语言服务器 `PATH` 最前面：Intelephense 的启动脚本读 `LITHE_NODE_PATH`，gopls 则自己调用 `go`。从 Dock 打开的应用不继承 shell 的 `PATH`（没有 `/opt/homebrew/bin`），不声明 `go` 时 gopls 能启动但每个请求都报 `no views`。项目目录里的同名工具永远不会被选中，因为语言服务器在打开文件时自动启动，不能执行仓库自带的程序。
+7. `packaged` 语言服务器固定为**本插件**已安装版本目录里的完整路径（`LanguageServerExtensionConfiguration.executableURL`），它就是唯一候选，不按文件名在 PATH 或其他插件里查找：两个插件都打包 `bin/language-server` 时也不会互相启动对方的服务器，文件缺失时直接报不可用而不是换成同名工具；`systemCommand`（如 gopls）走普通工具发现。`runtimeDependencies` 声明的运行时（v1 支持 `node`、`go`）由宿主发现，导出为 `LITHE_<TOOL>_PATH`，并把所在目录放到语言服务器 `PATH` 最前面：Intelephense 的启动脚本读 `LITHE_NODE_PATH`，gopls 则自己调用 `go`。从 Dock 打开的应用不继承 shell 的 `PATH`（没有 `/opt/homebrew/bin`），不声明 `go` 时 gopls 能启动但每个请求都报 `no views`。项目目录里的同名工具永远不会被选中，因为语言服务器在打开文件时自动启动，不能执行仓库自带的程序。
 8. 带 `validationArguments` 的语言服务器（如 `gopls version`）只有探测通过的候选才会被使用。插件在启动后才启用时，它的语言服务器错过了启动时的探测，所以 `AppModel` 在注册后发现尚未探测，会先探测再启动，而不是先报“找不到 gopls”再靠重试恢复。
 
 ### 3. 去掉原生加载与过严的隔离
@@ -84,7 +84,7 @@ gopls 把 `fmt.Println` 的定义指向 `GOROOT/src/fmt/print.go`，Intelephense
 - `cargo test --manifest-path rust/lithe-core/Cargo.toml --lib declarative_plugins`：合法样例、非法样例错误码、命令展开标准答案，以及仓库里的官方 `plugin.json`。
 - `./scripts/verify-shared-contracts.sh`：契约目录自洽（schema、fixture 引用、错误码均已在 README 中登记）。
 - `./scripts/verify-official-plugins.sh`：组装官方包并用 `LitheOfficialPluginVerifier` 检查信任策略、打包入口和"包内无 Mach-O"。
-- `./.agents/skills/write-stable-tests/scripts/test-stability-macos.sh -- --filter 'Plugin|LanguageExtensionProcessLifecycleTests|MacRuntimeToolDiscoveryTests'`：包校验、旧包过渡、签名、启停与进程清理。
+- `./.agents/skills/write-stable-tests/scripts/test-stability-macos.sh -- --filter 'Plugin|LanguageExtensionProcessLifecycleTests|LanguageServerToolServiceTests|LanguageNavigationCoordinatorTests|ExternalNavigationTests'`：包校验、旧包过渡、签名、启停与进程清理、打包入口固定、跨工作区跳转边界。
 - `LITHE_RUN_PHP_INTEGRATION=1 ./scripts/test-macos.sh --filter RealPhpIntegrationTests`：真实 Intelephense 与 PHPUnit。
 - `./scripts/verify-runtime-bundle-immutability.sh`：启动与插件工作流不改写安装目录。
 

@@ -83,7 +83,7 @@ macOS 使用声明式插件包和 publisher Ed25519 包签名；Windows 使用�
 - `./scripts/verify-runtime-bundle-immutability.sh`：确认典型启动和插件工作流不会改写已安装 bundle。
 - `node scripts/test-reuse-worktree-resources.mjs`：确认语言服务器下载和插件包不能跨工作树复用。
 - `./scripts/verify-agent-notes.sh`：确认本笔记格式、路径和验证命令有效。
-- 相关 macOS 测试：`MacPluginPackageDownloaderTests`、`MacRuntimeToolDiscoveryTests` 和 `PluginPackageStoreTests`。
+- 相关 macOS 测试：`MacPluginPackageDownloaderTests`、`LanguageServerToolServiceTests`、`LanguageExtensionProcessLifecycleTests` 和 `PluginPackageStoreTests`。
 - 新增插件还必须验证下载失败、校验失败、取消、等待重启、重装、回滚、禁用和卸载后的进程与文件清理。
 
 ## 适用范围

@@ -49,8 +49,14 @@ public struct DeclarativeLanguageServer: Equatable, Sendable {
     /// Runtimes the host discovers for the server, such as `node`.
     public let runtimeTools: [String]
 
-    /// Command names the host's tool discovery resolves. A packaged server is
-    /// addressed by its file name and found through the plugin's tool roots.
+    /// Path inside the plugin package for a packaged server.
+    public var packagedRelativePath: String? {
+        if case .packaged(let relativePath) = launch { relativePath } else { nil }
+    }
+
+    /// Command names the host's tool discovery resolves for a system command.
+    /// A packaged server reports its file name for display only; the host
+    /// launches the pinned path inside its own package.
     public var executableNames: [String] {
         switch launch {
         case .packaged(let relativePath):

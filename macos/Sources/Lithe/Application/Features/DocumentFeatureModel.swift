@@ -585,7 +585,9 @@ final class DocumentFeatureModel: ObservableObject {
             text: details.text,
             modificationDate: EditorDocument.modificationDate(for: normalizedURL),
             isReadOnly: isReadOnly,
-            isFileWritable: relativePath != nil && (fileStorage.metadata(for: normalizedURL)?.isWritable ?? true),
+            // A jump target outside the workspace, including one reached
+            // through a symlink inside it, is never writable from Lithe.
+            isFileWritable: !allowsOutsideWorkspace && (fileStorage.metadata(for: normalizedURL)?.isWritable ?? true),
             displayPath: displayPath,
             encoding: details.encoding, saveEncoding: saveEncoding, diskIdentity: details.identity
         )

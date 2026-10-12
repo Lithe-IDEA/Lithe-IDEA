@@ -67,6 +67,8 @@ package struct LanguageServerLaunchDescriptor: Hashable, Sendable {
     package let validationArguments: [String]
     package let environment: [String: String]
     package let runtimeTools: [String]
+    /// Executable pinned by the provider; see `LanguageServerExtensionConfiguration.executableURL`.
+    package let executableURL: URL?
     package let initializationOptions: ToolingJSONValue?
 
     package init(
@@ -75,6 +77,7 @@ package struct LanguageServerLaunchDescriptor: Hashable, Sendable {
         validationArguments: [String] = [],
         environment: [String: String] = [:],
         runtimeTools: [String] = [],
+        executableURL: URL? = nil,
         initializationOptions: ToolingJSONValue? = nil
     ) {
         self.executableNames = executableNames
@@ -82,6 +85,7 @@ package struct LanguageServerLaunchDescriptor: Hashable, Sendable {
         self.validationArguments = validationArguments
         self.environment = environment
         self.runtimeTools = runtimeTools
+        self.executableURL = executableURL
         self.initializationOptions = initializationOptions
     }
 }

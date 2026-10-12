@@ -234,6 +234,14 @@ extension AppModel {
         recordsHistory: Bool,
         onFailure: (() -> Void)? = nil
     ) {
+        // Decide before the coordinator records history or a target, so a
+        // refused jump leaves both untouched.
+        let external = externalNavigationDecision(for: location.url)
+        if external == .rejected {
+            showNotification("Only source files of the current language can be opened from outside the workspace")
+            onFailure?()
+            return
+        }
         let departure = recordsHistory ? currentEditorNavigationLocation() : nil
         let providerID = location.virtualProviderID
             ?? virtualDocumentProviderIDs[location.url]
@@ -251,19 +259,7 @@ extension AppModel {
                 // Definitions often live outside the project: Go's standard
                 // library, a module cache, or stubs inside a language-server
                 // package. Show them read-only instead of refusing the jump.
-                let isOutsideWorkspace = self.workspaceURL.map {
-                    self.workspaceRelativePath(for: destination.url, root: $0) == nil
-                } ?? false
-                if isOutsideWorkspace {
-                    let languageID = self.languageNavigationCoordinator.state.providerID
-                        ?? self.focusedEditorDocument.flatMap {
-                            self.languageProviderCatalog.provider(for: $0.url)?.id
-                        }
-                    guard self.isExternalNavigationSource(destination.url, languageID: languageID) else {
-                        self.showNotification("Only source files of the current language can be opened from outside the workspace")
-                        return
-                    }
-                }
+                let isOutsideWorkspace = external == .externalReadOnly
                 self.openFile(
                     destination.url,
                     isReadOnly: destination.isReadOnly || isOutsideWorkspace,
@@ -517,10 +513,14 @@ extension AppModel {
         )
     }
 
-    func isExternalNavigationSource(_ url: URL, languageID: String?) -> Bool {
-        LanguageNavigationCoordinator.allowsExternalSource(url, languageID: languageID) {
-            self.languageProviderCatalog.provider(for: $0)?.id
-        }
+    func externalNavigationDecision(for url: URL) -> ExternalNavigationDecision {
+        let languageID = languageNavigationCoordinator.state.providerID
+            ?? focusedEditorDocument.flatMap { languageProviderCatalog.provider(for: $0.url)?.id }
+        return LanguageNavigationCoordinator.externalNavigationDecision(
+            for: url,
+            workspaceURL: workspaceURL,
+            languageID: languageID
+        ) { self.languageProviderCatalog.provider(for: $0)?.id }
     }
 
     func presentLanguageNavigationResults(_ kind: LanguageNavigationResultKind) {

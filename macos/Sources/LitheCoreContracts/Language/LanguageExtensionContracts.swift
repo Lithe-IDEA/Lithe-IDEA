@@ -91,6 +91,10 @@ public struct LanguageServerExtensionConfiguration: Equatable, Sendable {
     public let environment: [String: String]
     /// Runtimes the server needs on its `PATH`, such as `go` for gopls.
     public let runtimeTools: [String]
+    /// An executable the provider ships itself, such as a server packaged in
+    /// a plugin. When set, it is the only candidate: `executableNames` is
+    /// then used for display, never for a global lookup.
+    public let executableURL: URL?
     public let languageIdentifier: String
 
     public init(
@@ -101,6 +105,7 @@ public struct LanguageServerExtensionConfiguration: Equatable, Sendable {
         validationArguments: [String] = [],
         environment: [String: String] = [:],
         runtimeTools: [String] = [],
+        executableURL: URL? = nil,
         languageIdentifier: String
     ) {
         self.languageID = languageID
@@ -110,6 +115,7 @@ public struct LanguageServerExtensionConfiguration: Equatable, Sendable {
         self.validationArguments = validationArguments
         self.environment = environment
         self.runtimeTools = runtimeTools
+        self.executableURL = executableURL
         self.languageIdentifier = languageIdentifier
     }
 }

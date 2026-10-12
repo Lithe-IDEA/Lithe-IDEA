@@ -44,6 +44,34 @@ struct LanguageServerToolServiceTests {
         #expect(restored.executableURL(for: descriptor) == brewURL)
     }
 
+    /// A pinned (plugin-packaged) server is the only candidate: a same-named
+    /// tool on PATH or in another plugin is never substituted, even when the
+    /// pinned file is missing.
+    @Test
+    func pinnedExecutableIsTheOnlyCandidate() {
+        let alpha = URL(fileURLWithPath: "/plugins/alpha/bin/language-server")
+        let beta = URL(fileURLWithPath: "/plugins/beta/bin/language-server")
+        let global = URL(fileURLWithPath: "/opt/homebrew/bin/language-server")
+        let store = LanguageServerToolTestStore()
+        let service = LanguageServerToolService(
+            runtimeService: makeRuntime(
+                executablePaths: [alpha.path, global.path],
+                candidates: ["language-server": [RuntimeToolCandidate(
+                    command: "language-server",
+                    executableURL: global,
+                    source: .homebrew
+                )]],
+                store: store
+            ),
+            commandRunner: LanguageServerToolTestProcessRunner(),
+            settingsStore: store
+        )
+
+        #expect(service.candidates(for: pinnedDescriptor("alpha", executable: alpha)).map(\.executableURL) == [alpha])
+        #expect(service.candidates(for: pinnedDescriptor("beta", executable: beta)).isEmpty)
+        #expect(service.executableURL(for: pinnedDescriptor("beta", executable: beta)) == nil)
+    }
+
     @Test
     func rejectsNonExecutableCustomPath() async {
         let store = LanguageServerToolTestStore()
@@ -251,6 +279,22 @@ struct LanguageServerToolServiceTests {
         let plan = LanguageServerInstallPlan.plan(for: descriptor)
         #expect(plan.homebrewFormula == nil)
         #expect(plan.officialDownloadURL == nil)
+    }
+
+    private func pinnedDescriptor(_ id: String, executable: URL) -> LanguageProviderDescriptor {
+        LanguageProviderDescriptor(
+            id: id,
+            displayName: id,
+            fileExtensions: [id],
+            capabilities: [.languageServer],
+            activationPolicy: .onDemand,
+            languageIdentifier: id,
+            languageServerLaunch: LanguageServerLaunchDescriptor(
+                executableNames: ["language-server"],
+                executableURL: executable
+            ),
+            languageServerInstallation: nil
+        )
     }
 
     private func goDescriptor() -> LanguageProviderDescriptor {

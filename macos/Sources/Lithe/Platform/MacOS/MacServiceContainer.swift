@@ -206,25 +206,10 @@ final class MacServiceContainer {
         } catch {
             preconditionFailure("Invalid built-in module graph: \(error.localizedDescription)")
         }
-        // Packaged language servers are read in place from the installed,
-        // read-only plugin version directory.
-        let pluginTools = pluginStartup.registeredPlugins.flatMap { installed in
-            installed.descriptor.languageServers.compactMap { server -> PluginPackagedTool? in
-                guard case .packaged(let relativePath) = server.launch,
-                      let command = server.executableNames.first else { return nil }
-                return PluginPackagedTool(
-                    command: command,
-                    executableURL: installed.packageURL
-                        .appendingPathComponent(relativePath)
-                        .standardizedFileURL,
-                    pluginDisplayName: installed.manifest.displayName
-                )
-            }
-        }
         let runtimeService = ProjectRuntimeService(
             runtimeLocator: MacRuntimeLocator(),
             store: store,
-            toolDiscovery: MacRuntimeToolDiscovery(pluginTools: pluginTools)
+            toolDiscovery: MacRuntimeToolDiscovery()
         )
         let rustLanguageProviderCatalogSource = RustLanguageProviderCatalogSource(core: rustCore)
         // Installation owns the process-backed language boundary even when a
@@ -691,6 +676,11 @@ final class MacServiceContainer {
                     arguments: server.arguments,
                     validationArguments: server.validationArguments,
                     runtimeTools: server.runtimeTools,
+                    // A packaged server is read in place from the installed,
+                    // read-only plugin version directory of this plugin only.
+                    executableURL: server.packagedRelativePath.map {
+                        installed.packageURL.appendingPathComponent($0).standardizedFileURL
+                    },
                     languageIdentifier: server.languageIdentifier
                 )
                 return ModuleFactory(manifest: manifest) {

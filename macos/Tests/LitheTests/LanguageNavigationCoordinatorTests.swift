@@ -4,6 +4,49 @@ import Testing
 
 @Suite("Language navigation coordinator")
 struct LanguageNavigationCoordinatorTests {
+    @Test("jump targets are classified by their real location")
+    func jumpTargetsAreClassifiedByTheirRealLocation() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lithe-jump-decision-\(UUID().uuidString)", isDirectory: true)
+        let workspace = root.appendingPathComponent("project", isDirectory: true)
+        let outside = root.appendingPathComponent("outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let main = workspace.appendingPathComponent("main.go")
+        let secret = outside.appendingPathComponent("id_rsa")
+        let library = outside.appendingPathComponent("print.go")
+        let credentials = outside.appendingPathComponent("credentials.json")
+        for file in [main, secret, library, credentials] {
+            try Data("x\n".utf8).write(to: file)
+        }
+        let disguisedSecret = workspace.appendingPathComponent("secret.go")
+        let linkedLibrary = workspace.appendingPathComponent("vendor.go")
+        try FileManager.default.createSymbolicLink(at: disguisedSecret, withDestinationURL: secret)
+        try FileManager.default.createSymbolicLink(at: linkedLibrary, withDestinationURL: library)
+        let languageOf: (URL) -> String? = { url in
+            switch url.pathExtension {
+            case "go": "go"
+            case "json": "json"
+            default: nil
+            }
+        }
+        func decision(_ url: URL) -> ExternalNavigationDecision {
+            LanguageNavigationCoordinator.externalNavigationDecision(
+                for: url, workspaceURL: workspace, languageID: "go", languageOf: languageOf
+            )
+        }
+
+        // temporaryDirectory sits under /var, a symlink to /private/var, so
+        // this also covers a workspace URL that is itself not canonical.
+        #expect(decision(main) == .workspace)
+        #expect(decision(disguisedSecret) == .rejected)
+        #expect(decision(linkedLibrary) == .externalReadOnly)
+        #expect(decision(library) == .externalReadOnly)
+        #expect(decision(credentials) == .rejected)
+        #expect(decision(URL(string: "jdt://contents/rt.jar/java.lang/String.class")!) == .workspace)
+    }
+
     @Test("external jumps open only source files of the originating language")
     func externalJumpsOnlyOpenSameLanguageSources() throws {
         let root = FileManager.default.temporaryDirectory

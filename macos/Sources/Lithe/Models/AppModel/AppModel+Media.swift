@@ -44,6 +44,7 @@ extension AppModel {
         let normalizedURL = url.standardizedFileURL
         if activateWhenReady {
             editorTabOrderFeature.repositoryDiffSelected = false
+            editorTabOrderFeature.databaseSelected = false
             selectedChange = nil
             closeBranchComparison()
             editorNavigationTarget = nil
@@ -64,6 +65,7 @@ extension AppModel {
         terminalPlacementFeature.activateDocument()
         activeDocumentID = nil
         editorTabOrderFeature.repositoryDiffSelected = false
+        editorTabOrderFeature.databaseSelected = false
         mediaFeature.select(media)
     }
 
@@ -89,6 +91,12 @@ extension AppModel {
         guard wasActive else { return }
 
         switch fallbackItem {
+        case .databaseOverview:
+            openDatabaseWorkspace(overview: true)
+        case .database(let profileID):
+            selectDatabaseWorkspace(profileID: profileID)
+        case let .databaseQuery(profileID, queryID):
+            selectDatabaseWorkspace(profileID: profileID, queryID: queryID)
         case .repositoryDiff:
             selectRepositoryDiffTab()
         case .document(let documentID):

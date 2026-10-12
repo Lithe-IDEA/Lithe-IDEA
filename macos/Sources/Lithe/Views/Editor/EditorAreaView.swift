@@ -110,16 +110,7 @@ struct EditorAreaView: View {
         let _ = LitheSignpost.bodyEvaluated("EditorAreaView")
         ZStack(alignment: .top) {
             Group {
-                if groupID == nil && model.workbenchFeature.selectedSidebar == .database {
-                    if let feature = model.databaseFeatureIfActive {
-                        DatabaseWorkspaceView()
-                            .environmentObject(feature)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    } else {
-                        ProgressView()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                } else if groupID == nil, let feature = model.gitFeatureIfActive,
+                if groupID == nil, let feature = model.gitFeatureIfActive,
                           let comparison = feature.branchComparison {
                     BranchComparisonView(
                         feature: feature,
@@ -190,6 +181,7 @@ struct EditorAreaView: View {
 
 
     private var activeItem: EditorTabItem? {
+        if model.isDatabaseWorkspaceSelected { return model.activeDatabaseEditorTab }
         if model.isRepositoryDiffSelected { return .repositoryDiff }
         return model.activeEditorTerminalSession.map { .terminal($0.id) }
             ?? model.activeMediaDocument.map { .media($0.id) }
@@ -309,9 +301,17 @@ struct EditorAreaView: View {
         Group {
             switch settings.editorTabLayoutMode {
             case .singleLine:
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 0) {
-                        editorTabItems
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 0) {
+                            editorTabItems
+                        }
+                    }
+                    .onChange(of: model.activeDatabaseEditorTab) { item in
+                        if model.isDatabaseWorkspaceSelected { proxy.scrollTo(item, anchor: .trailing) }
+                    }
+                    .onChange(of: model.editorTabItems) { _ in
+                        if model.isDatabaseWorkspaceSelected { proxy.scrollTo(model.activeDatabaseEditorTab, anchor: .trailing) }
                     }
                 }
                 .frame(height: 36)
@@ -357,6 +357,12 @@ struct EditorAreaView: View {
         ForEach(displayedTabItems) { item in
             Group {
                 switch item {
+                case .databaseOverview:
+                    databaseTab(overview: true)
+                case .database(let profileID):
+                    databaseTab(overview: false, profileID: profileID)
+                case let .databaseQuery(profileID, queryID):
+                    databaseTab(overview: false, profileID: profileID, queryID: queryID)
                 case .repositoryDiff:
                     repositoryDiffTab
                 case .document(let documentID):
@@ -403,6 +409,49 @@ struct EditorAreaView: View {
         guard let index = items.firstIndex(of: target.item) else { return paneItems }
         items.insert(source, at: index + (target.side == .after ? 1 : 0))
         return items
+    }
+
+    private func databaseTab(overview: Bool, profileID: UUID? = nil, queryID: UUID? = nil) -> some View {
+        let item: EditorTabItem = queryID.flatMap { id in profileID.map { .databaseQuery(profileID: $0, queryID: id) } }
+            ?? (overview ? .databaseOverview : .database(profileID))
+        let selected = paneItem == item
+        return HStack(spacing: 0) {
+            HStack(spacing: 7) {
+                if queryID != nil, let profile = model.databaseFeatureIfActive?.profiles.first(where: { $0.id == profileID }) {
+                    DatabaseBrandIcon(kind: profile.kind, size: 16)
+                } else {
+                    LitheIDEAIcon(resourcePath: "database/expui/dbms@20x20.svg", size: 16)
+                }
+                Group {
+                    if overview {
+                        Text("Database Overview")
+                    } else if let feature = model.databaseFeatureIfActive {
+                        DatabaseWorkspaceTabTitle(feature: feature, profileID: profileID, queryID: queryID)
+                    }
+                }.font(LitheTheme.uiFont(size: 13)).lineLimit(1)
+            }
+            .padding(.leading, 8)
+            .frame(height: 28)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if overview { model.openDatabaseWorkspace(overview: true) }
+                else { model.selectDatabaseWorkspace(profileID: profileID, queryID: queryID) }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                if overview { model.openDatabaseWorkspace(overview: true) }
+                else { model.selectDatabaseWorkspace(profileID: profileID, queryID: queryID) }
+            }
+            LitheToolWindowTabCloseButton { model.closeDatabaseTab(item) }
+                .opacity(selected || hoveredTabItem == item ? 1 : 0)
+                .allowsHitTesting(selected || hoveredTabItem == item)
+        }
+        .foregroundStyle(selected ? LitheTheme.primaryText : LitheTheme.secondaryText)
+        .modifier(LitheToolWindowTabStyle(isSelected: selected, isActive: editorIsActive))
+        .padding(.horizontal, 4).padding(.vertical, 4)
+        .onHover { updateHoveredTab(item, isHovering: $0) }
+        .background { editorTabFrameReader(for: item) }
     }
 
     private var repositoryDiffTab: some View {
@@ -751,6 +800,10 @@ struct EditorAreaView: View {
 
     private func closeEditorTab(_ item: EditorTabItem) {
         switch item {
+        case .databaseOverview:
+            model.closeDatabaseWorkspace(overview: true)
+        case .database, .databaseQuery:
+            model.closeDatabaseTab(item)
         case .repositoryDiff:
             model.closeGitCommitDiff()
         case .document(let documentID):
@@ -793,6 +846,19 @@ struct EditorAreaView: View {
     @ViewBuilder
     private func tabDragLabel(_ item: EditorTabItem) -> some View {
         switch item {
+        case .databaseOverview:
+            LitheIDEAIcon(resourcePath: "database/expui/dbms@20x20.svg", size: 16)
+            Text("Database Overview")
+        case .database(let profileID):
+            LitheIDEAIcon(resourcePath: "database/expui/dbms@20x20.svg", size: 16)
+            if let feature = model.databaseFeatureIfActive {
+                DatabaseWorkspaceTabTitle(feature: feature, profileID: profileID, queryID: nil)
+            }
+        case let .databaseQuery(profileID, queryID):
+            if let feature = model.databaseFeatureIfActive {
+                if let profile = feature.profiles.first(where: { $0.id == profileID }) { DatabaseBrandIcon(kind: profile.kind, size: 16) }
+                DatabaseWorkspaceTabTitle(feature: feature, profileID: profileID, queryID: queryID)
+            }
         case .document(let id):
             if let document = model.openDocuments.first(where: { $0.id == id }) {
                 LitheIcon(kind: EditorDocumentIconResolver.kind(for: document.url, resolvedKind: resolvedTabIcons[id]), size: 16)
@@ -833,7 +899,7 @@ struct EditorAreaView: View {
         guard tabDragState.draggedItem == item,
               let plan = tabDragPlan(for: item, translation: translation, location: location) else { return }
         tabDragPreview.move(by: translation)
-        if let groupID {
+        if let groupID, !item.isDatabaseTab {
             let destination = drag.destination(at: location, sourceGroup: groupID)
             if drag.target != destination { drag.target = destination }
         }
@@ -850,7 +916,7 @@ struct EditorAreaView: View {
             finishTabDrag()
             return
         }
-        if let groupID, let destination = drag.destination(at: location, sourceGroup: groupID) {
+        if let groupID, !item.isDatabaseTab, let destination = drag.destination(at: location, sourceGroup: groupID) {
             finishTabDrag()
             model.moveEditorTab(item, toGroup: destination.group, side: destination.side)
             return
@@ -1106,7 +1172,13 @@ struct EditorAreaView: View {
             editorTabs
             LitheToolWindowHeaderDivider()
 
-            if paneDiffSelected {
+            if let item = paneItem, item.isDatabaseTab, let feature = model.databaseFeatureIfActive {
+                Group {
+                    if item == .databaseOverview { DatabaseOverviewView() }
+                    else if case .databaseQuery = item { DatabaseSQLWorkspaceView() }
+                    else { DatabaseWorkspaceView() }
+                }.environmentObject(feature)
+            } else if paneDiffSelected {
                 if let feature = model.gitFeatureIfActive, let context = feature.selectedGitCommitDiffContext {
                     RepositoryDiffView(feature: feature, context: context,
                         onClose: { model.closeGitCommitDiff() },

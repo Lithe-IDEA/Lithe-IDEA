@@ -21,6 +21,7 @@ Monaco 原生容器按项目及分组复用，一个 WebView 只挂载在自己�
 关闭或移走最后一个标签后合并空组；新标签进入当前聚焦的组。文件和会话生命周期不交给布局树。
 分隔器继续使用 `LitheSplitPaneView`，尺寸变化留在局部视图，只在释放后提交比例。
 分组是当前项目会话状态，本次不增加重启恢复编辑分屏或跨窗口传输。
+与数据库 PR #17 集成后，数据库标签继续使用其共享工作区和查询状态，统一保留在同一个编辑分组，只允许组内重排；不能直接开放跨组移动，否则两个分组会显示同一数据库上下文。数据库工具窗口及 Services 工具窗口仍支持停靠分组。
 
 依据 IDEA Community `c7f91397daa3a961b4e78bc634fe467a0a7d9ade`：
 
@@ -66,6 +67,7 @@ Windows 的既有分栏实现不受此次 macOS 呈现改动影响，完整两�
 
 - `macos/Sources/Lithe/Application/Features/EditorTabOrderFeatureModel.swift`
 - `macos/Sources/Lithe/Application/Features/EditorGroupLayout.swift`
+- `macos/Sources/Lithe/Models/AppModel/AppModel+EditorGroups.swift`
 - `macos/Sources/Lithe/Views/Editor/EditorAreaView.swift`
 - `macos/Sources/Lithe/Views/Editor/EditorGroupContainer.swift`
 - `macos/Sources/Lithe/Views/Editor/EditorTabFrameStore.swift`

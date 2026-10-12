@@ -72,7 +72,7 @@ extension AppModel {
             case .gitLog: await refreshGitHistory()
             case .changes: _ = await activateGitModule()
             case .search: _ = await activateSearchModule()
-            case .database: _ = await databaseModuleCoordinator.activate()
+            case .database, .databaseServices: _ = await databaseModuleCoordinator.activate()
             case .agent: activateAgentConversation()
             case .maven, .mavenOutput, .run, .tests: _ = await activateExecutionModule()
             case .debug: _ = await activateDebugModule()

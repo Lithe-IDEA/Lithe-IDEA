@@ -1197,8 +1197,7 @@ struct WorkbenchView: View {
         if model.workbenchFeature.isVisible(tool) {
             model.workbenchFeature.setVisibility(tool, isVisible: false)
         } else if let sidebar = tool.sidebar {
-            if sidebar == .database { Task { await model.activateDatabaseModule() } }
-            else { model.workbenchFeature.selectedSidebar = sidebar }
+            model.workbenchFeature.selectedSidebar = sidebar
         } else if let contribution = contribution(for: tool) {
             moduleUIRegistry.perform(contribution, model: model)
         } else { model.workbenchFeature.setVisibility(tool, isVisible: true) }
@@ -1501,15 +1500,6 @@ struct WorkbenchView: View {
                 } else {
                     WorkbenchModuleUIRegistry.moduleLoadingView
                         .task { _ = await model.activateSearchModule() }
-                }
-            case .database:
-                if let feature = model.databaseFeatureIfActive {
-                    DatabaseSidebarView()
-                        .environmentObject(feature)
-                } else {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .task { await model.activateDatabaseModule() }
                 }
             }
         }

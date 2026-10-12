@@ -7,7 +7,7 @@ import Foundation
 final class WorkbenchFeatureModel: ObservableObject {
     enum ToolWindow: String, CaseIterable, Codable, Hashable, Sendable {
         case project, changes, pullRequests, search, database
-        case gitLog, terminal, agent, references, problems, maven, mavenOutput, spring, run, tests, debug
+        case gitLog, terminal, agent, databaseServices, references, problems, maven, mavenOutput, spring, run, tests, debug
 
         var sidebar: SidebarDestination? { SidebarDestination(rawValue: rawValue) }
         var rendererID: String? {
@@ -15,6 +15,8 @@ final class WorkbenchFeatureModel: ObservableObject {
             case .gitLog: "git.log"
             case .terminal: "terminal.sessions"
             case .agent: "agent.conversation"
+            case .database: "database.workspace"
+            case .databaseServices: "database.services"
             case .problems: "language.problems"
             case .maven: "execution.maven"
             case .mavenOutput: "execution.maven.output"
@@ -28,7 +30,7 @@ final class WorkbenchFeatureModel: ObservableObject {
 
     @Published private(set) var toolWindowStates = ToolWindow.allCases.enumerated().map {
         ToolWindowState(id: $0.element.rawValue,
-                        position: DockPosition(anchor: $0.element.sidebar != nil ? .left :
+                        position: DockPosition(anchor: $0.element.sidebar != nil && $0.element != .database ? .left :
                             (isRightDocked($0.element) ? .right : .bottom), group: .primary),
                         order: $0.offset, isVisible: $0.element == .project)
     }
@@ -70,7 +72,7 @@ final class WorkbenchFeatureModel: ObservableObject {
     /// visible while they are open.
     static func isRightDocked(_ toolWindow: ToolWindow) -> Bool {
         switch toolWindow {
-        case .maven, .agent: true
+        case .maven, .agent, .database: true
         default: false
         }
     }

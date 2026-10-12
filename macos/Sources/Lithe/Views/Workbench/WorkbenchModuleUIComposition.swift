@@ -206,6 +206,9 @@ enum WorkbenchModuleUIComposition {
     private static let databaseRegistration = WorkbenchModuleUIRegistry.Registration(
         contributions: DatabaseModule.moduleContributions,
         actions: [
+            .init(id: "database.services.toggle", perform: { model in
+                _ = model.toggleToolWindow(.databaseServices)
+            }),
             .init(id: "database.toggle", perform: { model in
                 if model.workbenchFeature.isVisible(.database) {
                     model.workbenchFeature.setVisibility(.database, isVisible: false)
@@ -215,6 +218,14 @@ enum WorkbenchModuleUIComposition {
             })
         ],
         renderers: [
+            .init(id: "database.services", ideaAssetPath: "expui/toolwindows/services@20x20.svg",
+                isVisible: { $0.databaseFeatureIfActive != nil },
+                isSelected: { $0.workbenchFeature.isVisible(.databaseServices) },
+                content: { model in
+                    guard let feature = model.databaseFeatureIfActive else { return AnyView(WorkbenchModuleUIRegistry.moduleLoadingView) }
+                    return AnyView(DatabaseServicesView().environmentObject(feature))
+                },
+                contentIdentity: { WorkbenchModuleUIRegistry.Renderer.featureIdentity($0.databaseFeatureIfActive) }),
             .init(
                 id: "database.workspace",
                 ideaAssetPath: "database/expui/dbms@20x20.svg",

@@ -167,3 +167,18 @@ reset{,_dark}.svg are unmodified 16x16 Apache-2.0 assets from Community
 c7f91397daa3a961b4e78bc634fe467a0a7d9ade, platform/icons/src/expui/general.
 AllIcons.Actions.Upload represents submission; grid RevertSelected assigns
 AllIcons.General.Reset in grid/impl/resources/intellij.grid.impl.xml.
+
+Database remaining-control alignment uses Community c7f91397daa3a961b4e78bc634fe467a0a7d9ade
+platform/icons/src/expui/nodes/dataTables{,_dark}.svg and
+expui/status/warning{,_dark}.svg. The database goldKey, blueKey, and collection light/dark
+SVGs come from the same installed IDEA IU-262.9437.185 DatabaseTools resource
+set as the existing database/expui assets, carry explicit Apache-2.0 headers,
+and follow DatabaseIconMappings.json. Only licensed SVGs are included; no
+DatabaseTools plugin implementation is copied.
+
+The database Services tool window and execution markers use unmodified Community
+revision c7f91397daa3a961b4e78bc634fe467a0a7d9ade assets:
+platform/icons/src/expui/toolwindows/services@20x20{,_dark}.svg,
+platform/icons/src/expui/general/greenCheckmark{,_dark}.svg and
+platform/icons/src/expui/status/error{,_dark}.svg.
+Copyright JetBrains s.r.o. and contributors; Apache License 2.0.

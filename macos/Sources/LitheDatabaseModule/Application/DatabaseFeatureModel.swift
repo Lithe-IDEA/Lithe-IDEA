@@ -33,7 +33,31 @@ package final class DatabaseFeatureModel: ObservableObject {
     @Published package var selectedProfileID: UUID?
     @Published package private(set) var tables: [String] = []
     @Published package private(set) var databaseOptions: [String] = []
-    @Published package var selectedTable: String?
+    @Published package var selectedTable: String? {
+        didSet { if selectedTable != oldValue { tableRequestID = nil; discardTableEdits() } }
+    }
+    // Editing belongs to the active table, not the lifetime of its SwiftUI renderer.
+    @Published private var storedTableCellDrafts: [DatabaseCellKey: DatabaseValue] = [:]
+    package var tableCellDrafts: [DatabaseCellKey: DatabaseValue] {
+        get { storedTableCellDrafts }
+        set { guard !isApplyingTableEdits else { return }; storedTableCellDrafts = newValue }
+    }
+    @Published private var storedTableInsertedRows: [DatabaseRow] = []
+    package var tableInsertedRows: [DatabaseRow] {
+        get { storedTableInsertedRows }
+        set { guard !isApplyingTableEdits else { return }; storedTableInsertedRows = newValue }
+    }
+    @Published private var storedTableDeletedRows: Set<Int> = []
+    package var tableDeletedRows: Set<Int> {
+        get { storedTableDeletedRows }
+        set { guard !isApplyingTableEdits else { return }; storedTableDeletedRows = newValue }
+    }
+    @Published package var tableApplyFailed = false
+    @Published private var applyingTableProfileGenerations: [UUID: UInt64] = [:]
+    private var deferredTableRefreshProfileIDs: Set<UUID> = []
+    package var isApplyingTableEdits: Bool {
+        selectedProfileID.map { applyingTableProfileGenerations[$0] != nil } ?? false
+    }
     @Published package private(set) var columns: [String] = []
     @Published package private(set) var columnTypes: [String: String] = [:]
     @Published package private(set) var rows: [DatabaseRow] = []
@@ -123,6 +147,7 @@ package final class DatabaseFeatureModel: ObservableObject {
 
     package var hasActiveModuleWork: Bool {
         isLoading
+            || !applyingTableProfileGenerations.isEmpty
             || sqlTabs.contains(where: { $0.isRunning })
             || backupProgress != nil
             || !scheduledBackupTasks.isEmpty
@@ -187,6 +212,7 @@ package final class DatabaseFeatureModel: ObservableObject {
             profiles = sortedProfiles(updated)
             setConnectionStatus(.connected, for: profile.id)
             guard profileGeneration == generation else { return true }
+            guard selectedProfileID == profile.id else { isLoading = false; return true }
             activateProfile(profile)
             if profile.kind.supportsDataGrid {
                 await refreshTables()
@@ -204,7 +230,8 @@ package final class DatabaseFeatureModel: ObservableObject {
         }
     }
 
-    package func remove(_ profile: DatabaseProfile) {
+    @discardableResult
+    package func remove(_ profile: DatabaseProfile) -> Bool {
         do {
             let updated = profiles.filter { $0.id != profile.id }
             try connectionStore.save(updated); try connectionStore.deletePassword(for: profile.id); try connectionStore.deleteSQLHistory(for: profile.id); try connectionStore.deleteBackupSchedule(for: profile.id); try recoveryStore.deleteExecutionEvents(for: profile.id)
@@ -218,7 +245,8 @@ package final class DatabaseFeatureModel: ObservableObject {
             if selectedProfileID == profile.id {
                 clearProfileScopedState()
             }
-        } catch { errorMessage = error.localizedDescription }
+            return true
+        } catch { errorMessage = error.localizedDescription; return false }
     }
 
     package func createFolder(name: String, parentID: UUID? = nil) -> Bool {
@@ -403,7 +431,33 @@ package final class DatabaseFeatureModel: ObservableObject {
         }
     }
 
+    // Refreshing a background connection must not navigate the active editor.
+    package func refresh(_ profile: DatabaseProfile) async {
+        if selectedProfileID == profile.id {
+            if profile.kind.supportsDataGrid { await refreshTables() }
+            else if profile.kind == .redis { await loadRedisKeys(pattern: "") }
+            else { await loadNacosConfigs(dataId: "", group: ""); await loadNacosServices(serviceName: "", group: "") }
+        } else {
+            setConnectionStatus(.connecting, for: profile.id)
+            do {
+                let connection = connection(profile)
+                try await Task.detached { [operations] in try operations.testConnection(connection) }.value
+                guard profiles.contains(where: { $0.id == profile.id }) else { return }
+                setConnectionStatus(.connected, for: profile.id)
+            } catch {
+                guard profiles.contains(where: { $0.id == profile.id }) else { return }
+                setConnectionStatus(.failed, for: profile.id)
+                errorMessage = executionError(error)
+            }
+        }
+    }
+
     package func refreshTables() async {
+        if let id = selectedProfileID, let applyingGeneration = applyingTableProfileGenerations[id] {
+            // Returning to a connection needs a fresh load after its older write releases the lock.
+            if applyingGeneration != profileGeneration { deferredTableRefreshProfileIDs.insert(id) }
+            return
+        }
         guard let profile = selectedProfile else {
             tables = []
             databaseOptions = []
@@ -422,7 +476,7 @@ package final class DatabaseFeatureModel: ObservableObject {
         databaseListRequestID = databaseRequestID
         isLoading = true; errorMessage = nil
         tables = []; objects = [:]
-        if tableToRefresh != nil {
+        if tableToRefresh != nil, !hasTableEdits {
             rows = []; sourceRows = []; totalRows = 0; currentOffset = 0
         }
         setConnectionStatus(.connecting, for: profile.id)
@@ -449,7 +503,9 @@ package final class DatabaseFeatureModel: ObservableObject {
             guard isCurrent(profileID: profile.id, generation: generation), tableListRequestID == requestID, databaseListRequestID == databaseRequestID else { return }
             if let tableToRefresh, selectedTable == tableToRefresh {
                 if tables.contains(tableToRefresh) {
-                    await openTable(tableToRefresh)
+                    // Keep the original row/key snapshot while edits are pending, including
+                    // refreshes caused by another console. The explicit refresh action clears edits.
+                    if !hasTableEdits { await openTable(tableToRefresh) }
                 } else {
                     selectedTable = nil
                     rows = []; sourceRows = []; columns = []; columnTypes = [:]
@@ -504,7 +560,6 @@ package final class DatabaseFeatureModel: ObservableObject {
         do {
             try connectionStore.save(updated)
             selectedTable = nil
-            resetSQLWorkspace()
             profiles = sortedProfiles(updated)
             activateProfile(updatedProfile)
             await refreshTables()
@@ -737,11 +792,17 @@ package final class DatabaseFeatureModel: ObservableObject {
     }
 
     package func openTable(_ table: String) async {
+        guard !isApplyingTableEdits || selectedTable != table else { return }
+        await reloadTable(table)
+    }
+
+    private func reloadTable(_ table: String) async {
         guard let profile = selectedProfile else { return }
         let generation = profileGeneration
         let requestID = UUID()
+        selectedTable = table
         tableRequestID = requestID
-        selectedTable = table; isLoading = true; errorMessage = nil
+        isLoading = true; errorMessage = nil
         do {
             let connection = connection(profile)
             async let metadata = Task.detached { [operations] in try operations.describeTable(connection: connection, schema: "", table: table) }.value
@@ -780,6 +841,7 @@ package final class DatabaseFeatureModel: ObservableObject {
     }
 
     package func loadPage(filters: [DatabaseFilter], sort: [DatabaseSort], offset: Int) async {
+        guard !isApplyingTableEdits else { return }
         guard let profile = selectedProfile, let table = selectedTable else { return }
         let generation = profileGeneration
         let requestID = UUID()
@@ -791,11 +853,13 @@ package final class DatabaseFeatureModel: ObservableObject {
                 try operations.pageTable(connection: connection, schema: "", table: table, limit: pageSize, offset: max(0, offset), filters: filters, sort: sort)
             }.value
             guard isCurrent(profileID: profile.id, generation: generation), selectedTable == table, tableRequestID == requestID else { return }
+            discardTableEdits()
             sourceRows = result.rows
             rows = masked(result.rows)
             totalRows = result.totalRows ?? Int64(result.rows.count); currentOffset = max(0, offset)
         } catch {
             if isCurrent(profileID: profile.id, generation: generation), selectedTable == table, tableRequestID == requestID {
+                discardTableEdits()
                 errorMessage = executionError(error)
                 rows = []; sourceRows = []; totalRows = 0
             }
@@ -804,7 +868,8 @@ package final class DatabaseFeatureModel: ObservableObject {
     }
 
     package func apply(drafts: [DatabaseCellDraft], insertedRows: [DatabaseRow], deletedIndexes: Set<Int>, confirmed: Bool = false) async -> Bool {
-        guard let profile = selectedProfile, let table = selectedTable else { return false }
+        guard !isLoading, !isApplyingTableEdits, let profile = selectedProfile, let table = selectedTable else { return false }
+        let requestID = tableRequestID
         let generation = profileGeneration
         var changesByRow: [Int: DatabaseRow] = [:]
         for draft in drafts { changesByRow[draft.rowIndex, default: [:]][draft.column] = typedValue(draft.value, for: draft.column) }
@@ -812,30 +877,48 @@ package final class DatabaseFeatureModel: ObservableObject {
             DatabaseMutation(action: .insert, table: table, values: row.mapValuesWithKeys { column, value in typedValue(value, for: column) })
         }
         for (index, values) in changesByRow where !deletedIndexes.contains(index) {
-            guard sourceRows.indices.contains(index), let key = keyValues(sourceRows[index]) else { errorMessage = "This table needs a primary key before rows can be edited."; return false }
+            guard sourceRows.indices.contains(index), let key = keyValues(sourceRows[index]) else { tableApplyFailed = true; errorMessage = "This table needs a primary key before rows can be edited."; return false }
             mutations.append(DatabaseMutation(action: .update, table: table, values: values, key: key))
         }
         for index in deletedIndexes {
-            guard sourceRows.indices.contains(index), let key = keyValues(sourceRows[index]) else { errorMessage = "This table needs a primary key before rows can be deleted."; return false }
+            guard sourceRows.indices.contains(index), let key = keyValues(sourceRows[index]) else { tableApplyFailed = true; errorMessage = "This table needs a primary key before rows can be deleted."; return false }
             mutations.append(DatabaseMutation(action: .delete, table: table, key: key))
         }
+        guard !mutations.isEmpty else { return true }
+        applyingTableProfileGenerations[profile.id] = generation
         isLoading = true; errorMessage = nil
+        let succeeded: Bool
         do {
             let connection = connection(profile)
             let recoveryPoint = profile.kind == .mongodb ? nil : try await createRecoveryPoint(profile: profile, reason: "Before table edit")
             _ = try await Task.detached { [operations] in try operations.applyChanges(connection: connection, schema: "", mutations: mutations, confirmed: confirmed, allowWrite: false) }.value
             appendAudit(DatabaseAuditEntry(id: UUID(), profileID: profile.id, action: "tableEdit", summary: "Applied table cell changes", createdAt: Date(), recoveryPointID: recoveryPoint?.id, rowsAffected: nil, succeeded: true, errorMessage: nil))
-            guard isCurrent(profileID: profile.id, generation: generation) else { return true }
-            await openTable(table); return true
+            if isCurrent(profileID: profile.id, generation: generation), selectedTable == table, tableRequestID == requestID {
+                discardTableEdits()
+                await reloadTable(table)
+            }
+            succeeded = true
         } catch {
             let sanitizedError = executionError(error)
             appendAudit(DatabaseAuditEntry(id: UUID(), profileID: profile.id, action: "tableEdit", summary: "Table cell changes failed", createdAt: Date(), recoveryPointID: nil, rowsAffected: nil, succeeded: false, errorMessage: sanitizedError))
-            if isCurrent(profileID: profile.id, generation: generation) {
+            if isCurrent(profileID: profile.id, generation: generation), selectedTable == table, tableRequestID == requestID {
+                tableApplyFailed = true
                 errorMessage = sanitizedError
                 isLoading = false
             }
-            return false
+            succeeded = false
         }
+        applyingTableProfileGenerations.removeValue(forKey: profile.id)
+        if deferredTableRefreshProfileIDs.remove(profile.id) != nil, selectedProfileID == profile.id {
+            await refreshTables()
+        }
+        return succeeded
+    }
+
+    package var hasTableEdits: Bool { !tableCellDrafts.isEmpty || !tableInsertedRows.isEmpty || !tableDeletedRows.isEmpty }
+
+    package func discardTableEdits() {
+        storedTableCellDrafts = [:]; storedTableInsertedRows = []; storedTableDeletedRows = []; tableApplyFailed = false
     }
 
     package func exportData(format: DatabaseTransferFormat) async -> Data? {
@@ -986,10 +1069,25 @@ package final class DatabaseFeatureModel: ObservableObject {
         selectedSQLTabID = tab.id
     }
 
-    package func closeSQLTab(_ id: UUID) {
+    package func sqlTab(_ id: UUID, profileID: UUID) -> DatabaseSQLTab? {
+        guard profiles.contains(where: { $0.id == profileID }) else { return nil }
+        let tabs = selectedProfileID == profileID ? sqlTabs : workspaceSelections[profileID]?.sqlTabs ?? []
+        return tabs.first { $0.id == id }
+    }
+
+    package func closeSQLTab(_ id: UUID, profileID: UUID? = nil) {
+        if let profileID, profileID != selectedProfileID {
+            guard var saved = workspaceSelections[profileID] else { return }
+            saved.sqlTabs.removeAll { $0.id == id }
+            if saved.sqlTabs.isEmpty { saved.sqlTabs = [DatabaseSQLTab(title: "Query 1")] }
+            if saved.sqlTabID == id { saved.sqlTabID = saved.sqlTabs.first?.id }
+            workspaceSelections[profileID] = saved
+            return
+        }
         guard sqlTabs.count > 1 else {
             updateSQLTab(id) { tab in
                 tab.sql = ""; tab.result = nil; tab.resultColumns = []; tab.rowsAffected = nil; tab.execution = nil; tab.errorMessage = nil
+                tab.statementExecutions = []
             }
             return
         }
@@ -1000,9 +1098,18 @@ package final class DatabaseFeatureModel: ObservableObject {
 
     package func updateSQL(_ sql: String, in tabID: UUID) {
         updateSQLTab(tabID) { tab in
+            rebaseSQLExecutions(&tab.statementExecutions, from: tab.sql, to: sql)
             tab.sql = sql
             tab.errorMessage = nil
         }
+    }
+
+    package func clearSQLOutput(in tabID: UUID) {
+        updateSQLTab(tabID) { $0.outputHiddenThroughExecutionID = $0.statementExecutions.last?.id }
+    }
+
+    package func dismissSQLError(in tabID: UUID) {
+        updateSQLTab(tabID) { $0.errorMessage = nil }
     }
 
     package func formatSQL(in tabID: UUID) {
@@ -1031,12 +1138,37 @@ package final class DatabaseFeatureModel: ObservableObject {
         }
     }
 
-    package func runSQL(in tabID: UUID, scope: DatabaseSQLExecutionScope = .all, confirmedRisk: Bool = false) async {
-        guard let profile = selectedProfile, sqlTabs.contains(where: { $0.id == tabID }) else {
+    package func runSQL(in tabID: UUID, scope: DatabaseSQLExecutionScope = .all, confirmedRisk: Bool = false, selectionRange: NSRange? = nil) async {
+        guard let profile = selectedProfile, var sourceTab = sqlTabs.first(where: { $0.id == tabID }) else {
             errorMessage = "Select a database connection first."
             return
         }
-        let sql = sql(for: tabID, scope: scope).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sourceTab.isRunning else { return }
+        var sql = sql(for: tabID, scope: scope).trimmingCharacters(in: .whitespacesAndNewlines)
+        let originalSource = sourceTab.sql as NSString
+        var searchRange = NSRange(location: 0, length: originalSource.length)
+        if case .selection = scope {
+            // A string-only caller cannot disambiguate repeated selections; omit its decoration.
+            searchRange = selectionRange.flatMap { range in
+                range.location != NSNotFound && range.location <= originalSource.length && range.length <= originalSource.length - range.location
+                    && originalSource.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines) == sql ? range : nil
+            } ?? NSRange(location: NSNotFound, length: 0)
+        }
+        // Format at the execution boundary, never while typing or composing marked text.
+        sql = DatabaseSQLFormatter.format(sql)
+        if case .all = scope {
+            sourceTab.sql = sql
+            searchRange = NSRange(location: 0, length: sql.utf16.count)
+        } else if !sql.isEmpty, searchRange.location != NSNotFound {
+            let selectedSource = originalSource.substring(with: searchRange)
+            let prefix = String(selectedSource.prefix(while: { $0.isWhitespace }))
+            let suffix = String(selectedSource.reversed().prefix(while: { $0.isWhitespace }).reversed())
+            let replacement = prefix + sql + suffix
+            sourceTab.sql = originalSource.replacingCharacters(in: searchRange, with: replacement)
+            searchRange.length = replacement.utf16.count
+        }
+        updateSQL(sourceTab.sql, in: tabID)
+        let source = sourceTab.sql as NSString
         let analysis = DatabaseSQLAnalyzer.analyze(sql)
         updateSQLTab(tabID) { tab in
             tab.errorMessage = nil
@@ -1063,6 +1195,10 @@ package final class DatabaseFeatureModel: ObservableObject {
         var lastQueryResult: DatabaseQueryResult?
         updateSQLTab(tabID) { tab in
             tab.isRunning = true; tab.errorMessage = nil; tab.result = nil; tab.resultColumns = []; tab.rowsAffected = nil; tab.execution = nil
+            // Output retains small log records; result pages belong only to the current batch.
+            tab.statementExecutions = tab.statementExecutions.map { record in
+                var record = record; record.result = nil; return record
+            }
         }
 
         do {
@@ -1073,28 +1209,53 @@ package final class DatabaseFeatureModel: ObservableObject {
             recoveryPointID = recoveryPoint?.id
             guard isCurrent(profileID: profile.id, generation: generation) else { return }
             for (index, statement) in analysis.statements.enumerated() {
+                guard isCurrent(profileID: profile.id, generation: generation), sqlTabs.contains(where: { $0.id == tabID }) else { return }
+                let statementSQL = statement.trimmingCharacters(in: .whitespacesAndNewlines)
+                var range = searchRange.location == NSNotFound ? NSRange(location: NSNotFound, length: 0) : source.range(of: statementSQL, range: searchRange)
+                if range.location != NSNotFound {
+                    if NSMaxRange(range) < NSMaxRange(searchRange), source.character(at: NSMaxRange(range)) == 59 { range.length += 1 }
+                    searchRange = NSRange(location: NSMaxRange(range), length: NSMaxRange(searchRange) - NSMaxRange(range))
+                }
+                let statementStarted = Date()
+                let clock = ContinuousClock()
+                let start = clock.now
                 let statementAnalysis = DatabaseSQLAnalyzer.analyze(statement)
+                var queryResult: DatabaseQueryResult?
+                var affected: UInt64?
+                func record(_ error: String? = nil) {
+                    let duration = start.duration(to: clock.now).components
+                    let milliseconds = max(0, Int(duration.seconds * 1_000 + duration.attoseconds / 1_000_000_000_000_000))
+                    guard isCurrent(profileID: profile.id, generation: generation) else { return }
+                    appendSQLStatementExecution(DatabaseSQLStatementExecution(id: UUID(), sql: statementSQL,
+                            sourceSQL: sourceTab.sql, sourceRange: range.location == NSNotFound ? nil : range,
+                            startedAt: statementStarted, batchStartedAt: startedAt, durationMilliseconds: milliseconds,
+                            result: queryResult.map(masked), rowsReturned: queryResult?.rows.count, rowsAffected: affected, errorMessage: error), in: tabID)
+                }
                 do {
                     if statementAnalysis.kind.usesQueryEndpoint {
                         lastQueryResult = try await Task.detached { [operations] in
                             try operations.query(connection: connection, sql: statement.trimmingCharacters(in: .whitespacesAndNewlines), values: [], limit: 10_000)
                         }.value
+                        queryResult = lastQueryResult
                     } else {
                         let result = try await Task.detached { [operations] in
                             try operations.execute(connection: connection, sql: statement.trimmingCharacters(in: .whitespacesAndNewlines), values: [], confirmed: confirmedRisk, allowWrite: false)
                         }.value
                         totalRowsAffected += result.rowsAffected
                         hasRowsAffected = true
+                        affected = result.rowsAffected
                     }
+                    record()
                 } catch {
-                    throw DatabaseSQLBatchError(statementIndex: index + 1, message: executionError(error))
+                    let message = executionError(error)
+                    record(message)
+                    if analysis.statementCount == 1 { throw error }
+                    throw DatabaseSQLBatchError(statementIndex: index + 1, message: message)
                 }
             }
 
             let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
-            let columns = lastQueryResult?.columns ?? lastQueryResult?.rows.reduce(into: [String]()) { result, row in
-                for key in row.keys where !result.contains(key) { result.append(key) }
-            } ?? []
+            let columns = lastQueryResult?.resolvedColumns ?? []
             let execution = DatabaseSQLExecution(
                 startedAt: startedAt,
                 durationMilliseconds: duration,
@@ -1119,11 +1280,23 @@ package final class DatabaseFeatureModel: ObservableObject {
             guard isCurrent(profileID: profile.id, generation: generation) else { return }
             let sanitizedError = executionError(error)
             let duration = max(0, Int(Date().timeIntervalSince(startedAt) * 1_000))
+            if sqlTabs.first(where: { $0.id == tabID })?.statementExecutions.contains(where: { $0.batchStartedAt == startedAt }) != true {
+                // Preparation can fail before any statement reaches the provider; log it without a fabricated range/result.
+                appendSQLStatementExecution(DatabaseSQLStatementExecution(id: UUID(), sql: sql, sourceSQL: sourceTab.sql,
+                    sourceRange: nil, startedAt: startedAt, batchStartedAt: startedAt, durationMilliseconds: duration,
+                    result: nil, rowsReturned: nil, rowsAffected: nil, errorMessage: sanitizedError), in: tabID)
+            }
             let operation = analysis.statementCount > 1 ? "batch" : analysis.kind.rawValue
             appendExecutionEvent(DatabaseExecutionEvent(id: UUID(), profileID: profile.id, profileName: profile.name, source: .sql, operation: operation, startedAt: startedAt, durationMilliseconds: duration, status: .failed, rowsReturned: nil, rowsAffected: hasRowsAffected ? totalRowsAffected : nil, errorMessage: sanitizedError))
             appendAudit(DatabaseAuditEntry(id: UUID(), profileID: profile.id, action: "sql", summary: "SQL execution failed", createdAt: startedAt, recoveryPointID: recoveryPointID, rowsAffected: hasRowsAffected ? totalRowsAffected : nil, succeeded: false, errorMessage: sanitizedError))
             updateSQLTab(tabID) { tab in
-                tab.isRunning = false; tab.errorMessage = sanitizedError; tab.execution = nil; tab.rowsAffected = hasRowsAffected ? totalRowsAffected : nil; tab.result = nil; tab.resultColumns = []
+                tab.isRunning = false; tab.errorMessage = sanitizedError
+                tab.execution = DatabaseSQLExecution(startedAt: startedAt, durationMilliseconds: duration,
+                    rowsReturned: nil, rowsAffected: hasRowsAffected ? totalRowsAffected : nil, truncated: false)
+                tab.rowsAffected = hasRowsAffected ? totalRowsAffected : nil; tab.result = nil; tab.resultColumns = []
+            }
+            if let execution = sqlTabs.first(where: { $0.id == tabID })?.execution {
+                recordSQLHistory(profileID: profile.id, sql: sql, analysis: analysis, execution: execution)
             }
         }
     }
@@ -1840,6 +2013,7 @@ package final class DatabaseFeatureModel: ObservableObject {
         sqlTabs = sqlTabs.map { tab in
             var tab = tab
             tab.result = nil; tab.resultColumns = []; tab.rowsAffected = nil; tab.execution = nil; tab.errorMessage = nil; tab.isRunning = false
+            tab.statementExecutions = []
             return tab
         }
     }
@@ -1847,6 +2021,45 @@ package final class DatabaseFeatureModel: ObservableObject {
     private func updateSQLTab(_ id: UUID, update: (inout DatabaseSQLTab) -> Void) {
         guard let index = sqlTabs.firstIndex(where: { $0.id == id }) else { return }
         update(&sqlTabs[index])
+    }
+
+    private func rebaseSQLExecutions(_ records: inout [DatabaseSQLStatementExecution], from original: String, to sql: String) {
+        guard original != sql, !records.isEmpty else { return }
+        // ponytail: One linear UTF-16 edit envelope for at most 100 records; replace with native edit ranges if large consoles require it.
+        let old = Array(original.utf16), new = Array(sql.utf16)
+        var start = 0, suffix = 0
+        while start < min(old.count, new.count), old[start] == new[start] { start += 1 }
+        while suffix < min(old.count, new.count) - start, old[old.count - suffix - 1] == new[new.count - suffix - 1] { suffix += 1 }
+        let oldEnd = old.count - suffix
+        let delimiter: (UInt16) -> Bool = { $0 == 59 || UnicodeScalar($0).map { CharacterSet.whitespacesAndNewlines.contains($0) } == true }
+        for index in records.indices {
+            var record = records[index]
+            if record.sourceSQL == original, var range = record.sourceRange, range.location >= 0,
+               range.location <= old.count, range.length > 0, range.length <= old.count - range.location {
+                if NSMaxRange(range) <= start { /* Unchanged prefix. */ }
+                else if range.location >= oldEnd { range.location += new.count - old.count }
+                else { record.sourceRange = nil }
+                if record.sourceRange != nil {
+                    // Do not retain a token prefix when typing joins text to either statement boundary.
+                    let before = range.location == 0 || delimiter(new[range.location - 1])
+                    let end = NSMaxRange(range)
+                    let after = end == new.count || new[end - 1] == 59 || delimiter(new[end])
+                    record.sourceRange = before && after ? range : nil
+                }
+            } else { record.sourceRange = nil }
+            record.sourceSQL = sql
+            records[index] = record
+        }
+    }
+
+    private func appendSQLStatementExecution(_ execution: DatabaseSQLStatementExecution, in tabID: UUID) {
+        updateSQLTab(tabID) { tab in
+            // ponytail: retain the latest 100 statements; disk-backed output can replace this bound.
+            var records = [execution]
+            rebaseSQLExecutions(&records, from: execution.sourceSQL, to: tab.sql)
+            tab.statementExecutions.append(contentsOf: records)
+            if tab.statementExecutions.count > 100 { tab.statementExecutions.removeFirst(tab.statementExecutions.count - 100) }
+        }
     }
 
     private func recordSQLHistory(profileID: UUID, sql: String, analysis: DatabaseSQLAnalysis, execution: DatabaseSQLExecution) {
@@ -1955,6 +2168,12 @@ private extension Dictionary where Key == String, Value == DatabaseValue {
     func mapValuesWithKeys(_ transform: (String, DatabaseValue) -> DatabaseValue) -> Self {
         Dictionary(uniqueKeysWithValues: map { ($0.key, transform($0.key, $0.value)) })
     }
+}
+
+package struct DatabaseCellKey: Hashable, Sendable {
+    package let row: Int
+    package let column: String
+    package init(row: Int, column: String) { self.row = row; self.column = column }
 }
 
 package struct DatabaseCellDraft: Sendable {

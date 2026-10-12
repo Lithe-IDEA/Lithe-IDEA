@@ -1930,12 +1930,50 @@ struct LitheCoreLogicTests {
     }
 
     @Test
-    func databaseSQLFormatterPreservesQuotedTextAndNormalizesKeywords() {
+    func databaseSQLFormatterPreservesQuotedTextAndWordCase() {
         let formatted = DatabaseSQLFormatter.format("select  name, 'a  b' from users where id=1;")
-        #expect(formatted.contains("SELECT name, 'a  b' FROM users WHERE id = 1;"))
+        #expect(formatted.contains("select\n    name, 'a  b' from users\nwhere id=1;"))
         let withComment = DatabaseSQLFormatter.format("select -- keep this text\nfrom users")
         #expect(withComment.contains("-- keep this text"))
-        #expect(withComment.contains("FROM users"))
+        #expect(withComment.contains("\nfrom users"))
+    }
+
+    @Test(arguments: [#"SELECT 'C:\', 'a,b';"#, #"SELECT E'it\'s FROM here', 'a,b';"#, #"UPDATE settings SET path='C:\', note='a,b';"#])
+    func databaseSQLFormatterLeavesSessionDependentEscapesVerbatim(sql: String) {
+        #expect(DatabaseSQLFormatter.format(sql) == sql)
+    }
+
+    @Test(arguments: ["\u{0301}a,b", "\u{0301}a''b, c", "\u{FE0F}a,b; DROP TABLE t; --"])
+    func databaseSQLScannersPreserveCombiningMarksInsideLiterals(literal: String) {
+        let sql = "SELECT '\(literal)' AS value;"
+        let formatted = DatabaseSQLFormatter.format(sql)
+        #expect(formatted.contains("'\(literal)'"))
+        #expect(DatabaseSQLFormatter.format(formatted) == formatted)
+        let analysis = DatabaseSQLAnalyzer.analyze(formatted)
+        #expect(analysis.kind == .query)
+        #expect(analysis.statementCount == 1)
+        #expect(analysis.statements.first?.contains("'\(literal)'") == true)
+    }
+
+    @Test(arguments: [
+        "select a>=1, b<>2, c!=3, 1.25, t.column::text from t;",
+        #"select E'it\'s from here', X'AB', [a]]b], `from`, 'where; 😀' from t;"#,
+        "select 'a'\n'b' from t;",
+        "select t.order, t.from, t.select from t;",
+        "select /* outer /* nested */ comment */ a from t;",
+        "select a # keep FROM here\nfrom t;",
+        "select $$begin SELECT x FROM t; end$$;"
+    ])
+    func databaseSQLFormatterPreservesLiteralAndOperatorTokens(sql: String) {
+        let formatted = DatabaseSQLFormatter.format(sql)
+        #expect(DatabaseSQLFormatter.format(formatted) == formatted)
+        if sql.contains("$$") { #expect(formatted == sql) }
+        else {
+            // Layout may change whitespace/case, but never an operator or a protected literal/comment.
+            for token in [">=", "<>", "!=", "1.25", "t.column::text", "t.order", "t.from", "t.select", #"E'it\'s from here'"#, "X'AB'", "[a]]b]", "`from`", "'where; 😀'", "'a'\n'b'", "/* outer /* nested */ comment */", "# keep FROM here"] where sql.contains(token) {
+                #expect(formatted.contains(token))
+            }
+        }
     }
 
     @Test

@@ -494,7 +494,10 @@ enum LitheTheme {
 
     // Community grid/impl: GridColorSchemeUtil reads editor colors, not Table UI tokens.
     enum DatabaseGrid {
-        static var background: Color { activeTheme == .lithe ? controlColor(light: 0xFFFFFF, dark: 0x191A1C) : editor }
+        // Structural surfaces share the workbench palette; cell states retain their own tokens.
+        static var background: Color { editor }
+        // GridEditorPanelBase.updateEditorPrefix -> INLINE_PARAMETER_HINT foreground.
+        static var clausePlaceholder: Color { activeTheme == .lithe ? controlColor(light: 0x7A7A7A, dark: 0x858A94) : secondaryText }
         // SelectionColorLayer -> DataGridUIUtil.softHighlightOf: +/- 0x10 per RGB channel.
         static var headerBackground: Color { activeTheme == .lithe ? controlColor(light: 0xEFEFEF, dark: 0x292A2C) : raised }
         // SelectionColorLayer.getRowHeaderBackground -> GRID_CURRENT_ROW / CARET_ROW_COLOR.
@@ -505,6 +508,25 @@ enum LitheTheme {
         static var border: Color { activeTheme == .lithe ? controlColor(light: 0xE6E6E6, dark: 0x323438) : guide }
         // TableResultView reserves one logical pixel for each enabled grid line.
         static let borderWidth: CGFloat = 1
+        static func rowHeaderWidth(rowCount: Int) -> CGFloat {
+            let digits = String(max(1, rowCount)).count
+            let width = (String(repeating: "0", count: digits) as NSString).size(withAttributes: [.font: editorFont(size: 13)]).width
+            return max(24, ceil(width) + 16)
+        }
+
+        static func columnWidths(_ columns: [String], availableWidth: CGFloat, rowHeaderWidth: CGFloat,
+                                 values: (String) -> [String]) -> [String: CGFloat] {
+            let font = editorFont(size: 13)
+            func textWidth(_ text: String) -> CGFloat { ceil((text as NSString).size(withAttributes: [.font: font]).width) }
+            let full = columns.map { max(40, max(textWidth($0) + 61, values($0).map { textWidth($0) + 6 }.max() ?? 0)) }
+            let available = max(40, availableWidth - rowHeaderWidth)
+            let preferred = full.map { min($0, available * (3 - sqrt(5)) / 2) }
+            let extra = max(0, available - preferred.reduce(0, +))
+            let total = max(1, full.reduce(0, +))
+            return Dictionary(columns.indices.map {
+                (columns[$0], preferred[$0] + extra * full[$0] / total)
+            }, uniquingKeysWith: max)
+        }
         // MutationsColorLayer -> MessageType.ERROR -> Islands Notification.errorBackground.
         static var failedMutation: Color { controlColor(light: 0xFFF6F5, dark: 0x56272B) }
         // SelectionColorLayer -> DataGridUIUtil.softHighlightOf, preserving the mutation hue.
@@ -531,6 +553,23 @@ enum LitheTheme {
         static let editingBorderWidth: CGFloat = 2
         // TableResultView: font line height + 1pt row margin + 4pt cell insets.
         static var rowHeight: CGFloat { ceil(NSLayoutManager().defaultLineHeight(for: editorFont(size: 13)) * editorLineHeightMultiple) + 5 }
+    }
+
+    /// Community c7f91397: Islands editor DEFAULT_* attributes, separate from UI semantic colors.
+    enum DatabaseConsole {
+        // CONSOLE_RANGE_TO_EXECUTE (Islands Dark); use its verified green as the Lithe light fallback.
+        // INLAY_TEXT_WITHOUT_BACKGROUND follows Islands Dark / Default light.
+        static var statementOutline: Color { controlColor(light: 0x3D7A49, dark: 0x3D7A49) }
+        static var executionInfo: Color { controlColor(light: 0x7A7A7A, dark: 0x727782) }
+        // EditorNotificationPanel Status.Error -> Islands Banner.errorBorderColor.
+        static var errorBorder: Color { controlColor(light: 0xFFC4C5, dark: 0x80383E) }
+        // Success follows greenCheckmark.svg; failure follows ERRORS_ATTRIBUTES.ERROR_STRIPE_COLOR.
+        static var successStripe: Color { controlColor(light: 0x369650, dark: 0x57965C) }
+        static var failureStripe: Color { controlColor(light: 0xCF5B56, dark: 0xD64D5B) }
+        static var comment: Color { activeTheme == .lithe ? controlColor(light: 0x8C8C8C, dark: 0x7A7E85) : secondaryText }
+        static var keyword: Color { activeTheme == .lithe ? controlColor(light: 0x0033B3, dark: 0xCF8E6D) : skill }
+        static var number: Color { activeTheme == .lithe ? controlColor(light: 0x1750EB, dark: 0x2AACB8) : warning }
+        static var string: Color { activeTheme == .lithe ? controlColor(light: 0x067D17, dark: 0x6AAB73) : success }
     }
 
     // MARK: - 输入控件
@@ -654,7 +693,7 @@ enum LitheTheme {
     static let editorLineHeightMultiple: CGFloat = 1.2
     static let editorBaselineLift: CGFloat = 1.5
 
-    static func editorFont(size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+    static func editorFont(size: CGFloat, weight: NSFont.Weight = .regular, italic: Bool = false) -> NSFont {
         let face: String
         switch weight.rawValue {
         case ..<NSFont.Weight.thin.rawValue: face = "Thin"
@@ -666,7 +705,8 @@ enum LitheTheme {
         case ..<NSFont.Weight.heavy.rawValue: face = "Bold"
         default: face = "ExtraBold"
         }
-        return NSFont(name: "JetBrainsMono-\(face)", size: size)
+        let styledFace = italic ? (face == "Regular" ? "Italic" : face + "Italic") : face
+        return NSFont(name: "JetBrainsMono-\(styledFace)", size: size)
             ?? .monospacedSystemFont(ofSize: size, weight: weight)
     }
 

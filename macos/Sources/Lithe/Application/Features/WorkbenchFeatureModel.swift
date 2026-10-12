@@ -13,6 +13,7 @@ final class WorkbenchFeatureModel: ObservableObject {
         case terminal
         case agent
         case database
+        case databaseServices
         case references
         case problems
         case maven

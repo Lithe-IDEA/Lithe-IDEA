@@ -1494,6 +1494,7 @@ final class AppModel: ObservableObject, Identifiable, UnsavedDocumentHandling {
             if let media = openMediaDocuments.first(where: { $0.id == id }) { selectMediaDocument(media) }
         case .databaseOverview: openDatabaseWorkspace(overview: true)
         case .database(let profileID): selectDatabaseWorkspace(profileID: profileID)
+        case let .databaseQuery(profileID, queryID): selectDatabaseWorkspace(profileID: profileID, queryID: queryID)
         case .repositoryDiff, nil: break
         }
     }

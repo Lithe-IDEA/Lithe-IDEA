@@ -60,6 +60,9 @@ struct DatabaseToolbarAppearanceTests {
             "expui/toolwindows/structure.svg", "expui/actions/checked.svg", "expui/general/undo.svg", "expui/general/moreHorizontal.svg",
             "expui/general/upload.svg", "expui/general/reset.svg", "expui/general/chevronDown.svg", "expui/general/chevronLeft.svg", "expui/general/chevronRight.svg",
             "general/arrowSplitCenterV.svg", "general/arrowUp.svg", "general/arrowDown.svg",
+            "expui/general/delete.svg", "expui/general/edit.svg", "expui/status/warning.svg", "expui/nodes/dataTables.svg",
+            "expui/general/greenCheckmark.svg", "expui/status/error.svg",
+            "database/expui/goldKey.svg", "database/expui/blueKey.svg", "database/expui/collection.svg",
             "database/expui/schema.svg", "database/expui/objectGroup.svg", "database/expui/table.svg", "database/expui/column.svg"
         ] {
             let asset = dark ? LitheIcons.darkIdeaAssetPath(for: path) : path

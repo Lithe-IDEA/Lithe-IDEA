@@ -12,11 +12,23 @@ struct DatabaseTableView: View {
     @State private var editingCell: CellKey?
     @FocusState private var focusedFilter: UUID?
     @FocusState private var focusedCell: CellKey?
-    @State private var drafts: [CellKey: DatabaseValue] = [:]
-    @State private var insertedRows: [DatabaseRow] = []
+    private var drafts: [CellKey: DatabaseValue] {
+        get { feature.tableCellDrafts }
+        nonmutating set { feature.tableCellDrafts = newValue }
+    }
+    private var insertedRows: [DatabaseRow] {
+        get { feature.tableInsertedRows }
+        nonmutating set { feature.tableInsertedRows = newValue }
+    }
     @State private var selectedRows: Set<Int> = []
-    @State private var deletedRows: Set<Int> = []
-    @State private var applyFailed = false
+    private var deletedRows: Set<Int> {
+        get { feature.tableDeletedRows }
+        nonmutating set { feature.tableDeletedRows = newValue }
+    }
+    private var applyFailed: Bool {
+        get { feature.tableApplyFailed }
+        nonmutating set { feature.tableApplyFailed = newValue }
+    }
     @State private var exportDocument: DatabaseTransferDocument?
     @State private var temporaryExportURL: URL?
     @State private var exportFormat = DatabaseTransferFormat.csv
@@ -50,8 +62,6 @@ struct DatabaseTableView: View {
                 dataActionBar
             }
             switch feature.workspaceSection {
-            case .sql where feature.selectedProfile?.kind.isSQLDatabase == true:
-                DatabaseSQLWorkspaceView()
             case .structure where feature.selectedProfile?.kind.isSQLDatabase == true:
                 DatabaseStructureView()
             case .history where feature.selectedProfile?.kind.isSQLDatabase == true:
@@ -66,6 +76,10 @@ struct DatabaseTableView: View {
                     grid
                 }
             }
+        }
+        .disabled(feature.isApplyingTableEdits)
+        .onChange(of: feature.isApplyingTableEdits) { applying in
+            if applying { editingCell = nil; focusedCell = nil }
         }
         .litheWorkbenchSurface(LitheTheme.DatabaseGrid.background)
         .workbenchHoverTooltipScope()
@@ -90,40 +104,43 @@ struct DatabaseTableView: View {
                 filterConditions[0].column = columns.first ?? ""
             }
         }
-        .sheet(isPresented: $showsReplaceSheet) {
+        .background(LitheCenteredPopup(isPresented: $showsReplaceSheet, dialogTitle: String(localized: "Replace Values in Current Page")) {
             DatabaseReplaceSheet(
                 columns: feature.columns,
                 column: $replaceColumn,
                 searchText: $replaceText,
                 replacementText: $replacementText,
-                onReplace: replaceCurrentPage
+                onReplace: replaceCurrentPage,
+                onCancel: { showsReplaceSheet = false }
             )
             .environment(\.locale, model.settings.language.locale)
             .id(model.settings.language)
-        }
-        .sheet(isPresented: $showsBatchUpdateSheet) {
+        })
+        .background(LitheCenteredPopup(isPresented: $showsBatchUpdateSheet, dialogTitle: String(localized: "Batch Edit Rows")) {
             DatabaseBatchUpdateSheet(
                 columns: feature.columns,
                 selectedCount: selectedRows.count,
-                onApply: applyBatchUpdate
+                onApply: applyBatchUpdate,
+                onCancel: { showsBatchUpdateSheet = false }
             )
             .environment(\.locale, model.settings.language.locale)
             .id(model.settings.language)
-        }
-        .sheet(isPresented: Binding(
+        })
+        .background(LitheCenteredPopup(isPresented: Binding(
             get: { rowDetailsIndex != nil },
             set: { if !$0 { rowDetailsIndex = nil } }
-        )) {
+        ), dialogTitle: String(localized: "Row Details")) {
             if let rowDetailsIndex, feature.rows.indices.contains(rowDetailsIndex) {
                 DatabaseRowDetailsSheet(
                     rowNumber: rowDetailsIndex + 1,
                     columns: feature.columns,
-                    row: feature.rows[rowDetailsIndex]
+                    row: feature.rows[rowDetailsIndex],
+                    onCancel: { self.rowDetailsIndex = nil }
                 )
                 .environment(\.locale, model.settings.language.locale)
                 .id(model.settings.language)
             }
-        }
+        })
         .fileExporter(isPresented: $showsExporter, document: exportDocument, contentType: exportFormat.contentType, defaultFilename: exportFilename) { result in
             if case let .failure(error) = result { feature.errorMessage = error.localizedDescription }
             if let temporaryExportURL { feature.removeTemporaryFile(temporaryExportURL) }
@@ -206,7 +223,18 @@ struct DatabaseTableView: View {
                 HStack(spacing: 2) {
                     if feature.selectedProfile?.kind.isSQLDatabase == true {
                         ForEach(DatabaseWorkspaceSection.allCases) { section in
-                            Button { feature.workspaceSection = section } label: {
+                            Button {
+                                if section == .sql, let profileID = feature.selectedProfileID {
+                                    if let queryID = feature.selectedSQLTabID,
+                                       model.editorTabItems.contains(.databaseQuery(profileID: profileID, queryID: queryID)) {
+                                        model.selectDatabaseWorkspace(profileID: profileID, queryID: queryID)
+                                    } else {
+                                        model.openDatabaseQuery(profileID: profileID)
+                                    }
+                                } else {
+                                    feature.workspaceSection = section
+                                }
+                            } label: {
                                 LitheIDEAIcon(resourcePath: section.iconPath, size: 16, preservesOriginalColors: true)
                             }
                             .buttonStyle(LitheIconButtonStyle(
@@ -337,18 +365,18 @@ struct DatabaseTableView: View {
                 }
                 Spacer()
                 Button { filterConditions.append(.init(column: feature.columns.first ?? "")) } label: {
-                    Label("Add Condition", systemImage: "plus")
+                    HStack(spacing: 4) {
+                        LitheIDEAIcon(resourcePath: "expui/general/add.svg", size: 16, preservesOriginalColors: true)
+                        Text("Add Condition")
+                    }
                 }
-                .buttonStyle(.litheNoPress)
+                .litheToolbarIconButton(isIconOnly: false)
             }
             ForEach($filterConditions) { $condition in
                 HStack(spacing: 8) {
-                    Button { condition.isEnabled.toggle() } label: {
-                        Image(systemName: condition.isEnabled ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(condition.isEnabled ? LitheTheme.accent : LitheTheme.tertiaryText)
-                    }
-                    .buttonStyle(.litheNoPress)
-                    .help(condition.isEnabled ? "Disable condition" : "Enable condition")
+                    Toggle("Enable condition", isOn: $condition.isEnabled)
+                        .toggleStyle(.checkbox).labelsHidden()
+                        .help(condition.isEnabled ? "Disable condition" : "Enable condition")
                     LitheSettingsSelect(selection: $condition.column, options: feature.columns, width: 150, accessibilityLabel: "Column", title: { $0 }, localizesTitles: false)
                     .frame(width: 150)
                     LitheSettingsSelect(selection: $condition.operator, options: DatabaseFilterOperator.allCases, width: 130, accessibilityLabel: "Operator", title: { $0.menuTitle })
@@ -359,9 +387,9 @@ struct DatabaseTableView: View {
                         .frame(width: 170)
                         .disabled(condition.operator == .isNull || condition.operator == .isNotNull)
                     Button(role: .destructive) { filterConditions.removeAll { $0.id == condition.id } } label: {
-                        Image(systemName: "trash")
+                        LitheIDEAIcon(resourcePath: "expui/general/delete.svg", size: 16, preservesOriginalColors: true)
                     }
-                    .buttonStyle(.litheNoPress)
+                    .litheToolbarIconButton()
                 }
             }
             HStack {
@@ -383,9 +411,12 @@ struct DatabaseTableView: View {
                 Text("ORDER BY").font(LitheTheme.uiFont(size: 13, weight: .semibold, design: .monospaced))
                 Spacer()
                 Button { sortConditions.append(.init(column: feature.columns.first ?? "")) } label: {
-                    Label("Add Sort", systemImage: "plus")
+                    HStack(spacing: 4) {
+                        LitheIDEAIcon(resourcePath: "expui/general/add.svg", size: 16, preservesOriginalColors: true)
+                        Text("Add Sort")
+                    }
                 }
-                .buttonStyle(.litheNoPress)
+                .litheToolbarIconButton(isIconOnly: false)
             }
             if sortConditions.isEmpty {
                 Text("No sorting")
@@ -400,12 +431,12 @@ struct DatabaseTableView: View {
                     .frame(width: 190)
                     LitheSettingsSelect(selection: $sortConditions[index].descending, options: [false, true], width: 120, accessibilityLabel: "Direction", title: { $0 ? "Descending" : "Ascending" })
                     .frame(width: 120)
-                    Button { moveSort(from: index, by: -1) } label: { Image(systemName: "arrow.up") }
-                        .buttonStyle(.litheNoPress).help("Move up").disabled(index == 0)
-                    Button { moveSort(from: index, by: 1) } label: { Image(systemName: "arrow.down") }
-                        .buttonStyle(.litheNoPress).help("Move down").disabled(index == sortConditions.count - 1)
-                    Button(role: .destructive) { sortConditions.remove(at: index) } label: { Image(systemName: "trash") }
-                        .buttonStyle(.litheNoPress)
+                    Button { moveSort(from: index, by: -1) } label: { LitheIDEAIcon(resourcePath: "general/arrowUp.svg", size: 16, preservesOriginalColors: true) }
+                        .litheToolbarIconButton().help("Move up").disabled(index == 0)
+                    Button { moveSort(from: index, by: 1) } label: { LitheIDEAIcon(resourcePath: "general/arrowDown.svg", size: 16, preservesOriginalColors: true) }
+                        .litheToolbarIconButton().help("Move down").disabled(index == sortConditions.count - 1)
+                    Button(role: .destructive) { sortConditions.remove(at: index) } label: { LitheIDEAIcon(resourcePath: "expui/general/delete.svg", size: 16, preservesOriginalColors: true) }
+                        .litheToolbarIconButton()
                 }
             }
             HStack {
@@ -427,7 +458,7 @@ struct DatabaseTableView: View {
                 title.font(LitheTheme.codeFont)
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(active ? LitheTheme.primaryText : LitheTheme.secondaryText)
+            .foregroundStyle(active ? LitheTheme.DatabaseConsole.keyword : LitheTheme.DatabaseGrid.clausePlaceholder)
             .padding(.horizontal, 6)
             .padding(.top, 6).padding(.bottom, 5)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -510,6 +541,9 @@ struct DatabaseTableView: View {
             }
             .buttonStyle(.litheNoPress)
             .help(allRowsSelected ? "Deselect all rows on this page" : "Select all rows on this page")
+            .overlay(alignment: .trailing) {
+                Rectangle().fill(gridBorder).frame(width: LitheTheme.DatabaseGrid.borderWidth).allowsHitTesting(false)
+            }
             ForEach(feature.columns, id: \.self) { column in
                 HStack(spacing: 4) {
                     LitheIDEAIcon(resourcePath: feature.primaryKeyColumns.contains(column)
@@ -525,10 +559,10 @@ struct DatabaseTableView: View {
                             .foregroundStyle(LitheTheme.tertiaryText)
                     }
                     LitheMenu {
-                        LitheContextMenuItem.action("Ascending", systemImage: "arrow.up") {
+                        LitheContextMenuItem.action("Ascending", icon: AnyView(LitheIDEAIcon(resourcePath: "general/arrowUp.svg", size: 16, preservesOriginalColors: true))) {
                             setSort(column: column, descending: false)
                         }
-                        LitheContextMenuItem.action("Descending", systemImage: "arrow.down") {
+                        LitheContextMenuItem.action("Descending", icon: AnyView(LitheIDEAIcon(resourcePath: "general/arrowDown.svg", size: 16, preservesOriginalColors: true))) {
                             setSort(column: column, descending: true)
                         }
                     } label: {
@@ -558,7 +592,6 @@ struct DatabaseTableView: View {
         .background(LitheTheme.DatabaseGrid.headerBackground)
         .overlay(alignment: .bottom) {
             Rectangle().fill(gridBorder).frame(height: LitheTheme.DatabaseGrid.borderWidth)
-                .padding(.leading, selectionColumnWidth)
         }
     }
 
@@ -581,6 +614,9 @@ struct DatabaseTableView: View {
                 : isHighlightedRow(index) ? LitheTheme.DatabaseGrid.currentRowBackground : Color.clear)
             .disabled(deletedRows.contains(index))
             .litheContextMenu { rowContextMenu(index: index) }
+            .overlay(alignment: .trailing) {
+                Rectangle().fill(gridBorder).frame(width: LitheTheme.DatabaseGrid.borderWidth).allowsHitTesting(false)
+            }
             ForEach(feature.columns, id: \.self) { column in
                 let key = CellKey(row: index, column: column)
                 Group {
@@ -621,7 +657,7 @@ struct DatabaseTableView: View {
                                 selectedRows = []
                                 pasteAnchor = key
                                 focusedCell = key
-                                editingCell = clickCount >= 2 && feature.selectedProfile?.readOnly != true && !deletedRows.contains(index) ? key : nil
+                                editingCell = clickCount >= 2 && !feature.isApplyingTableEdits && feature.selectedProfile?.readOnly != true && !deletedRows.contains(index) ? key : nil
                             }
                         }
                     }
@@ -643,7 +679,6 @@ struct DatabaseTableView: View {
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) {
             Rectangle().fill(gridBorder).frame(height: LitheTheme.DatabaseGrid.borderWidth)
-                .padding(.leading, selectionColumnWidth)
         }
     }
 
@@ -653,6 +688,9 @@ struct DatabaseTableView: View {
                 .font(LitheTheme.codeFont)
                 .foregroundStyle(isHighlightedRow(feature.rows.count + index) ? LitheTheme.DatabaseGrid.currentRowNumber : LitheTheme.DatabaseGrid.rowNumber)
                 .frame(width: selectionColumnWidth, height: LitheTheme.DatabaseGrid.rowHeight)
+                .overlay(alignment: .trailing) {
+                    Rectangle().fill(gridBorder).frame(width: LitheTheme.DatabaseGrid.borderWidth).allowsHitTesting(false)
+                }
             ForEach(feature.columns, id: \.self) { column in
                 let key = CellKey(row: feature.rows.count + index, column: column)
                 let value = insertedRows[index][column]
@@ -690,7 +728,7 @@ struct DatabaseTableView: View {
                                 selectedRows = []
                                 pasteAnchor = key
                                 focusedCell = key
-                                editingCell = clickCount >= 2 && feature.selectedProfile?.readOnly != true ? key : nil
+                                editingCell = clickCount >= 2 && !feature.isApplyingTableEdits && feature.selectedProfile?.readOnly != true ? key : nil
                             }
                         }
                     }
@@ -715,7 +753,6 @@ struct DatabaseTableView: View {
                                        row: feature.rows.count + index))
         .overlay(alignment: .bottom) {
             Rectangle().fill(gridBorder).frame(height: LitheTheme.DatabaseGrid.borderWidth)
-                .padding(.leading, selectionColumnWidth)
         }
     }
 
@@ -740,28 +777,15 @@ struct DatabaseTableView: View {
     }
 
     private func columnWidths(availableWidth: CGFloat) -> [String: CGFloat] {
-        let font = LitheTheme.editorFont(size: 13)
-        func textWidth(_ text: String) -> CGFloat { ceil((text as NSString).size(withAttributes: [.font: font]).width) }
-        // ponytail: sample the first 100 loaded rows, as DefaultGridColumnLayout does;
-        // persistent user-resized widths can replace this when resizing is supported.
-        let full = feature.columns.map { column in
-            max(40, max(textWidth(column) + 61, feature.rows.prefix(100).map { textWidth(display($0[column])) + 6 }.max() ?? 0))
+        // ponytail: sample 100 loaded rows; persistent user-resized widths can replace this.
+        LitheTheme.DatabaseGrid.columnWidths(feature.columns, availableWidth: availableWidth,
+                                            rowHeaderWidth: selectionColumnWidth) { column in
+            feature.rows.prefix(100).map { display($0[column]) }
         }
-        let available = max(40, availableWidth - selectionColumnWidth)
-        let preferred = full.map { min($0, available * (3 - sqrt(5)) / 2) }
-        let extra = max(0, available - preferred.reduce(0, +))
-        let total = max(1, full.reduce(0, +))
-        return Dictionary(uniqueKeysWithValues: feature.columns.indices.map { index in
-            // Fill the viewport instead of Community's content-width × 1.2 cap.
-            let width = preferred[index] + extra * full[index] / total
-            return (feature.columns[index], width)
-        })
     }
 
     private var selectionColumnWidth: CGFloat {
-        let digits = String(max(1, feature.rows.count + insertedRows.count)).count
-        let width = (String(repeating: "0", count: digits) as NSString).size(withAttributes: [.font: LitheTheme.editorFont(size: 13)]).width
-        return max(24, ceil(width) + 16)
+        LitheTheme.DatabaseGrid.rowHeaderWidth(rowCount: feature.rows.count + insertedRows.count)
     }
     private var selectableRowIndexes: Set<Int> {
         Set(feature.rows.indices).subtracting(deletedRows)
@@ -836,26 +860,17 @@ struct DatabaseTableView: View {
     }
 
     private func performApply(confirmed: Bool) {
-        let submittedDrafts = drafts
-        let submittedRows = insertedRows
-        let submittedDeletions = deletedRows
-        let cellDrafts = submittedDrafts.map { DatabaseCellDraft(rowIndex: $0.key.row, column: $0.key.column, value: $0.value) }
         let profileID = feature.selectedProfileID
         let table = feature.selectedTable
         Task {
-            guard feature.selectedProfileID == profileID, feature.selectedTable == table else { return }
-            let succeeded = await feature.apply(
-                drafts: cellDrafts,
-                insertedRows: submittedRows,
-                deletedIndexes: submittedDeletions,
+            guard feature.selectedProfileID == profileID, feature.selectedTable == table,
+                  !feature.isApplyingTableEdits else { return }
+            _ = await feature.apply(
+                drafts: drafts.map { DatabaseCellDraft(rowIndex: $0.key.row, column: $0.key.column, value: $0.value) },
+                insertedRows: insertedRows,
+                deletedIndexes: deletedRows,
                 confirmed: confirmed
             )
-            guard feature.selectedProfileID == profileID, feature.selectedTable == table,
-                  drafts == submittedDrafts, insertedRows == submittedRows, deletedRows == submittedDeletions else { return }
-            applyFailed = !succeeded
-            if succeeded {
-                discard()
-            }
         }
     }
 
@@ -926,9 +941,9 @@ struct DatabaseTableView: View {
         sortConditions.swapAt(index, destination)
     }
     private func reloadQuery(offset: Int) {
+        selectedRows = []; pasteAnchor = nil; editingCell = nil; focusedCell = nil
         Task {
             await feature.loadPage(filters: appliedFilters, sort: appliedSort, offset: offset)
-            discard()
         }
     }
     private func refreshTable() {
@@ -952,6 +967,7 @@ struct DatabaseTableView: View {
     private func nextPage() { reloadQuery(offset: feature.currentOffset + feature.pageSize) }
 
     private func pasteFromClipboard() {
+        guard !feature.isApplyingTableEdits else { return }
         guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
         let lines = text.components(separatedBy: .newlines).filter { !$0.isEmpty }
         guard !lines.isEmpty, !feature.columns.isEmpty else { return }
@@ -1086,83 +1102,46 @@ struct DatabaseTableView: View {
 }
 
 private struct DatabaseBatchUpdateSheet: View {
-    @Environment(\.dismiss) private var dismiss
     let columns: [String]
     let selectedCount: Int
     let onApply: (String, String, Bool) -> Void
-
+    let onCancel: () -> Void
     @State private var column = ""
     @State private var value = ""
     @State private var setNull = false
+    @FocusState private var valueFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 9) {
-                Image(systemName: "square.and.pencil")
-                    .font(LitheTheme.uiFont(size: 13, weight: .medium))
-                    .foregroundStyle(LitheTheme.accent)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Batch Edit Rows")
-                        .font(LitheTheme.uiFont(size: 14, weight: .semibold))
-                    Text("\(selectedCount) selected")
-                        .font(LitheTheme.uiFont(size: 10.5))
-                        .foregroundStyle(LitheTheme.secondaryText)
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 56)
-            .background(LitheTheme.toolHeader)
-
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("\(selectedCount) selected").foregroundStyle(LitheTheme.secondaryText)
                 Text("Set one field for every selected row. The change remains pending until you choose Apply.")
-                    .font(LitheTheme.uiFont(size: 11))
-                    .foregroundStyle(LitheTheme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Column")
-                        .font(LitheTheme.uiFont(size: 10.5, weight: .medium))
-                        .foregroundStyle(LitheTheme.secondaryText)
-                    LitheSettingsSelect(selection: $column, options: columns, width: 240, accessibilityLabel: "Column", title: { $0 }, localizesTitles: false)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity)
+                    .foregroundStyle(LitheTheme.secondaryText).fixedSize(horizontal: false, vertical: true)
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
+                    GridRow {
+                        Text("Column").frame(width: 80, alignment: .leading)
+                        LitheSettingsSelect(selection: $column, options: columns, width: 316, accessibilityLabel: "Column", title: { $0 }, localizesTitles: false)
+                    }
+                    GridRow {
+                        Text("Value")
+                        TextField("New value", text: $value).focused($valueFocused)
+                            .modifier(LitheCommitDialogInputStyle(focused: valueFocused)).disabled(setNull)
+                    }
+                    GridRow { Color.clear.frame(width: 80, height: 1); Toggle("Set NULL", isOn: $setNull).toggleStyle(.checkbox) }
                 }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Value")
-                        .font(LitheTheme.uiFont(size: 10.5, weight: .medium))
-                        .foregroundStyle(LitheTheme.secondaryText)
-                    TextField("New value", text: $value)
-                        .textFieldStyle(.roundedBorder)
-                        .disabled(setNull)
-                    Toggle("Set NULL", isOn: $setNull)
-                        .toggleStyle(.checkbox)
-                }
-            }
-            .padding(16)
-
+            }.padding(16)
             Rectangle().fill(LitheTheme.divider).frame(height: 1)
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Stage Batch Edit") {
-                    onApply(column, value, setNull)
-                    dismiss()
-                }
-                .buttonStyle(LitheCommitDialogButtonStyle(primary: true))
-                .disabled(column.isEmpty || selectedCount == 0)
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 54)
-            .background(LitheTheme.toolHeader)
+                Button("Cancel", action: onCancel).buttonStyle(LitheCommitDialogButtonStyle()).keyboardShortcut(.cancelAction)
+                Button("Stage Batch Edit") { onApply(column, value, setNull); onCancel() }
+                    .buttonStyle(LitheCommitDialogButtonStyle(primary: true)).keyboardShortcut(.defaultAction)
+                    .disabled(column.isEmpty || selectedCount == 0)
+            }.padding(16)
         }
-        .frame(width: 440)
-        .background(LitheTheme.editor)
-        .foregroundStyle(LitheTheme.primaryText)
-        .onAppear {
-            if column.isEmpty { column = columns.first ?? "" }
-        }
+        .font(LitheTheme.uiFont(size: 13)).foregroundStyle(LitheTheme.primaryText)
+        .frame(width: 440).background(LitheCommitDialogStyle.background)
+        .onAppear { if column.isEmpty { column = columns.first ?? "" } }
     }
 }
 
@@ -1195,7 +1174,7 @@ private struct DatabaseTableEmptyState: View {
     }
 }
 
-private struct CellKey: Hashable { let row: Int; let column: String }
+typealias CellKey = DatabaseCellKey
 
 private struct DatabaseTableFilterDraft: Identifiable {
     let id = UUID()
@@ -1228,85 +1207,79 @@ private extension DatabaseFilterOperator {
 }
 
 private struct DatabaseRowDetailsSheet: View {
-    @Environment(\.dismiss) private var dismiss
     let rowNumber: Int
     let columns: [String]
     let row: DatabaseRow
+    let onCancel: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Image(systemName: "list.bullet.rectangle")
-                    .foregroundStyle(LitheTheme.accent)
-                Text("Row Details").font(LitheTheme.uiFont(size: 14, weight: .semibold))
-                Text("#\(rowNumber)").foregroundStyle(LitheTheme.secondaryText)
-                Spacer()
-                Button("Close") { dismiss() }
-            }
-            .padding(16)
+            Text("#\(rowNumber)").foregroundStyle(LitheTheme.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(16)
             Rectangle().fill(LitheTheme.divider).frame(height: 1)
             ScrollView {
-                LazyVStack(spacing: 0) {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
                     ForEach(columns, id: \.self) { column in
-                        HStack(alignment: .top, spacing: 14) {
-                            Text(column)
-                                .font(LitheTheme.uiFont(size: 11, weight: .semibold))
-                                .frame(width: 150, alignment: .leading)
-                            Text(valueText(row[column]))
-                                .font(LitheTheme.uiFont(size: 11.5, design: .monospaced))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        GridRow {
+                            Text(column).frame(width: 150, alignment: .leading)
+                            Text(row[column]?.displayText ?? "<null>").font(LitheTheme.codeFont)
+                                .foregroundStyle(row[column] == .null ? LitheTheme.DatabaseGrid.nullText : LitheTheme.DatabaseGrid.text)
+                                .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(LitheTheme.editor)
-                        .overlay(alignment: .bottom) { Rectangle().fill(LitheTheme.divider).frame(height: 1) }
                     }
-                }
-            }
+                }.padding(16)
+            }.litheScrollViewChrome()
+            Rectangle().fill(LitheTheme.divider).frame(height: 1)
+            HStack { Spacer(); Button("Close", action: onCancel).buttonStyle(LitheCommitDialogButtonStyle()).keyboardShortcut(.cancelAction) }.padding(16)
         }
-        .frame(width: 620, height: 460)
-    }
-
-    private func valueText(_ value: DatabaseValue?) -> String {
-        value?.displayText ?? "NULL"
+        .font(LitheTheme.uiFont(size: 13)).foregroundStyle(LitheTheme.primaryText)
+        .frame(width: 620, height: 460).background(LitheCommitDialogStyle.background)
     }
 }
 
 private struct DatabaseReplaceSheet: View {
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.locale) private var locale
     let columns: [String]
     @Binding var column: String
     @Binding var searchText: String
     @Binding var replacementText: String
     let onReplace: () -> Void
+    let onCancel: () -> Void
+    @FocusState private var focusedField: String?
 
     var body: some View {
         VStack(spacing: 0) {
-            Text("Replace Values in Current Page")
-                .font(LitheTheme.uiFont(size: 15, weight: .semibold))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
-            Form {
-                LitheSettingsSelect(selection: $column, options: [""] + columns, width: 240, accessibilityLabel: "Column",
-                    title: { $0.isEmpty ? String(localized: "All columns", locale: locale) : $0 }, localizesTitles: false)
-                TextField("Find", text: $searchText)
-                TextField("Replace with", text: $replacementText)
-            }
-            .formStyle(.grouped)
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
+                GridRow {
+                    Text("Column").frame(width: 96, alignment: .leading)
+                    LitheSettingsSelect(selection: $column, options: [""] + columns, width: 280, accessibilityLabel: "Column",
+                        title: { $0.isEmpty ? String(localized: "All columns", locale: locale) : $0 }, localizesTitles: false)
+                }
+                GridRow {
+                    Text("Find")
+                    TextField("", text: $searchText).accessibilityLabel("Find").focused($focusedField, equals: "find")
+                        .modifier(LitheCommitDialogInputStyle(focused: focusedField == "find"))
+                }
+                GridRow {
+                    Text("Replace with")
+                    TextField("", text: $replacementText).accessibilityLabel("Replace with").focused($focusedField, equals: "replace")
+                        .modifier(LitheCommitDialogInputStyle(focused: focusedField == "replace"))
+                }
+            }.padding(16)
+            Rectangle().fill(LitheTheme.divider).frame(height: 1)
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Replace") { onReplace(); dismiss() }
-                    .buttonStyle(LitheCommitDialogButtonStyle(primary: true))
+                Button("Cancel", action: onCancel).buttonStyle(LitheCommitDialogButtonStyle()).keyboardShortcut(.cancelAction)
+                Button("Replace") { onReplace(); onCancel() }
+                    .buttonStyle(LitheCommitDialogButtonStyle(primary: true)).keyboardShortcut(.defaultAction)
                     .disabled(searchText.isEmpty)
-            }
-            .padding(16)
+            }.padding(16)
         }
-        .frame(width: 420, height: 250)
+        .font(LitheTheme.uiFont(size: 13)).foregroundStyle(LitheTheme.primaryText)
+        .frame(width: 420).background(LitheCommitDialogStyle.background)
     }
 }
+
 
 struct DatabaseTransferDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.data] }
@@ -1333,7 +1306,7 @@ private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
 }
 
-private struct DatabaseGridCellClickTarget: NSViewRepresentable {
+struct DatabaseGridCellClickTarget: NSViewRepresentable {
     let onMouseDown: (Int) -> Void
 
     func makeNSView(context: Context) -> DatabaseGridCellClickView {

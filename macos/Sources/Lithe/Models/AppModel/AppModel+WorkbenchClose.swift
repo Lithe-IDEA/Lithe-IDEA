@@ -17,7 +17,7 @@ extension AppModel {
             return true
         }
         if isDatabaseWorkspaceSelected {
-            closeDatabaseWorkspace(overview: editorTabOrderFeature.databaseOverviewSelected)
+            closeDatabaseTab(activeDatabaseEditorTab)
             return true
         }
         if branchComparison != nil {
@@ -44,7 +44,7 @@ extension AppModel {
         switch item {
         case .databaseOverview:
             closeDatabaseWorkspace(overview: true)
-        case .database:
+        case .database, .databaseQuery:
             closeDatabaseTab(item)
         case .repositoryDiff:
             closeGitCommitDiff()

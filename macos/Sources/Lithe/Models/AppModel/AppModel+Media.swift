@@ -94,6 +94,8 @@ extension AppModel {
             openDatabaseWorkspace(overview: true)
         case .database(let profileID):
             selectDatabaseWorkspace(profileID: profileID)
+        case let .databaseQuery(profileID, queryID):
+            selectDatabaseWorkspace(profileID: profileID, queryID: queryID)
         case .repositoryDiff:
             selectRepositoryDiffTab()
         case .document(let documentID):

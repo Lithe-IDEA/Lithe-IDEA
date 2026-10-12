@@ -75,29 +75,6 @@ struct DatabaseSidebarView: View {
             HStack(spacing: 2) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 2) {
-                        if let selected = feature.selectedProfile,
-                           selected.kind == .mysql || selected.kind == .mariadb {
-                            LitheMenu {
-                                LitheContextMenuItem.action("Refresh databases") {
-                                    Task { await feature.refreshDatabases() }
-                                }
-                                LitheContextMenuItem.separator
-                                if feature.databaseOptions.isEmpty {
-                                    LitheContextMenuItem.heading("No databases loaded")
-                                } else {
-                                    for database in feature.databaseOptions {
-                                        LitheContextMenuItem.action(database, checked: selected.database == database) {
-                                            Task { await feature.selectDatabase(database, for: selected) }
-                                        }
-                                    }
-                                }
-                            } label: {
-                                DatabaseBrandIcon(kind: selected.kind, size: LitheTheme.Metrics.toolbarIconSize)
-                            }
-                            .litheToolbarIconButton()
-                            .workbenchHoverHelp(Text("Choose database"))
-                            .accessibilityLabel("Choose database")
-                        }
                         Button { presentConnectionEditor() } label: {
                             LitheIDEAIcon(resourcePath: "expui/general/add.svg",
                                 size: LitheTheme.Metrics.toolbarIconSize, preservesOriginalColors: true)
@@ -276,7 +253,7 @@ struct DatabaseSidebarView: View {
         }
         .alert("Remove connection?", isPresented: $showsProfileDeletionConfirmation, presenting: profilePendingDeletion) { profile in
             Button("Remove Connection", role: .destructive) {
-                feature.remove(profile)
+                model.removeDatabaseConnection(profile)
                 profilePendingDeletion = nil
             }
             Button("Cancel", role: .cancel) { profilePendingDeletion = nil }
@@ -633,9 +610,7 @@ struct DatabaseSidebarView: View {
                                 .foregroundStyle(LitheTheme.tertiaryText)
                                 .frame(width: LitheTheme.Tree.disclosureSlot)
                             if profile.kind == .mongodb {
-                                Image(systemName: "doc.on.doc")
-                                    .font(LitheTheme.uiFont(size: LitheTheme.Tree.iconSize))
-                                    .foregroundStyle(LitheTheme.Tree.secondaryText)
+                                LitheIDEAIcon(resourcePath: "database/expui/collection.svg", size: LitheTheme.Tree.iconSize, preservesOriginalColors: true)
                                     .frame(width: LitheTheme.Tree.iconSize)
                             } else {
                                 LitheIDEAIcon(resourcePath: "database/expui/table.svg", size: LitheTheme.Tree.iconSize,
@@ -674,10 +649,10 @@ struct DatabaseSidebarView: View {
                             .padding(.leading, indent + 48)
                             .frame(height: 24)
                         } else {
-                            sidebarLeaf(title: profile.kind == .mongodb ? "Fields" : "Columns", symbol: "list.bullet.indent", count: feature.columns.count, indent: indent + 36, tint: LitheTheme.success)
-                            sidebarLeaf(title: "Indexes", symbol: "key", count: feature.indexes.count, indent: indent + 36, tint: LitheTheme.warning)
+                            sidebarLeaf(title: profile.kind == .mongodb ? "Fields" : "Columns", symbol: "expui/nodes/dataTables.svg", count: feature.columns.count, indent: indent + 36, tint: LitheTheme.success)
+                            sidebarLeaf(title: "Indexes", symbol: "database/expui/goldKey.svg", count: feature.indexes.count, indent: indent + 36, tint: LitheTheme.warning)
                             if profile.kind != .mongodb {
-                                sidebarLeaf(title: "Foreign Keys", symbol: "link", count: feature.foreignKeys.count, indent: indent + 36, tint: LitheTheme.accent)
+                                sidebarLeaf(title: "Foreign Keys", symbol: "database/expui/blueKey.svg", count: feature.foreignKeys.count, indent: indent + 36, tint: LitheTheme.accent)
                             }
                         }
                     }
@@ -686,30 +661,15 @@ struct DatabaseSidebarView: View {
             ForEach(profile.kind == .mongodb ? [] : DatabaseObjectKind.allCases.filter { $0 != .tables }, id: \.self) { kind in
                 let entries = feature.objects[kind] ?? []
                 if !entries.isEmpty {
-                    DisclosureGroup {
+                    objectSectionHeader(kind: kind, title: LocalizedStringKey(kind.title), count: entries.count, indent: indent)
+                    if !collapsedObjectKinds.contains(kind) {
                         ForEach(Array(entries.enumerated()), id: \.offset) { _, row in
-                            Text(objectLabel(row))
-                                .font(LitheTheme.uiFont(size: 13))
-                                .foregroundStyle(LitheTheme.secondaryText)
-                                .lineLimit(1)
-                                .padding(.leading, 34)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .frame(height: 23)
+                            Text(objectLabel(row)).font(LitheTheme.uiFont(size: 13)).lineLimit(1)
+                                .padding(.leading, indent + LitheTheme.Tree.indent)
+                                .frame(maxWidth: .infinity, minHeight: LitheTheme.Tree.rowHeight, alignment: .leading)
+                                .litheTreeRow()
                         }
-                    } label: {
-                        Label {
-                            HStack(spacing: 4) {
-                                Text(LocalizedStringKey(kind.title))
-                                Text("(\(entries.count))")
-                            }
-                        } icon: {
-                            Image(systemName: kind.symbol)
-                        }
-                        .font(LitheTheme.uiFont(size: 13))
-                        .foregroundStyle(LitheTheme.secondaryText)
                     }
-                    .padding(.leading, indent + 10)
-                    .padding(.top, 2)
                 }
             }
         }
@@ -723,13 +683,8 @@ struct DatabaseSidebarView: View {
             HStack(spacing: LitheTheme.Tree.iconTextGap) {
                 LitheIDEAIcon(resourcePath: !collapsedObjectKinds.contains(kind) ? "expui/general/chevronDown.svg" : "expui/general/chevronRight.svg", size: LitheTheme.Tree.iconSize)
                     .frame(width: LitheTheme.Tree.disclosureSlot)
-                if kind == .tables {
-                    LitheIDEAIcon(resourcePath: "database/expui/objectGroup.svg", size: LitheTheme.Tree.iconSize,
-                                  preservesOriginalColors: true)
-                } else {
-                    Image(systemName: kind.symbol)
-                        .font(LitheTheme.uiFont(size: LitheTheme.Tree.iconSize))
-                }
+                LitheIDEAIcon(resourcePath: "database/expui/objectGroup.svg", size: LitheTheme.Tree.iconSize,
+                              preservesOriginalColors: true)
                 Text(title)
                     .foregroundStyle(LitheTheme.Tree.text)
                 Spacer()
@@ -759,10 +714,11 @@ struct DatabaseSidebarView: View {
         tint: Color = LitheTheme.secondaryText
     ) -> some View {
         HStack(spacing: LitheTheme.Tree.iconTextGap) {
-            Image(systemName: symbol)
-                .font(LitheTheme.uiFont(size: 13))
-                .foregroundStyle(tint)
-                .frame(width: LitheTheme.Tree.iconSize)
+            if symbol.hasSuffix(".svg") {
+                LitheIDEAIcon(resourcePath: symbol, size: LitheTheme.Tree.iconSize, preservesOriginalColors: true)
+            } else {
+                Color.clear.frame(width: LitheTheme.Tree.iconSize, height: LitheTheme.Tree.iconSize)
+            }
             Text(title)
                 .font(LitheTheme.uiFont(size: 13))
                 .lineLimit(1)
@@ -848,12 +804,7 @@ struct DatabaseSidebarView: View {
     }
 
     private func refresh(_ profile: DatabaseProfile) {
-        Task {
-            if feature.selectedProfileID != profile.id { await feature.select(profile) }
-            else if profile.kind.supportsDataGrid { await feature.refreshTables() }
-            else if profile.kind == .redis { await feature.loadRedisKeys(pattern: "") }
-            else { await feature.loadNacosConfigs(dataId: "", group: ""); await feature.loadNacosServices(serviceName: "", group: "") }
-        }
+        Task { await feature.refresh(profile) }
     }
 
     private func refreshSelectedConnection() {
@@ -862,10 +813,7 @@ struct DatabaseSidebarView: View {
     }
 
     private func openSQLQuery(_ profile: DatabaseProfile, sql: String = "") {
-        model.selectDatabaseWorkspace(profileID: profile.id)
-        guard model.databaseFeatureIfActive === feature, feature.selectedProfileID == profile.id else { return }
-        feature.addSQLTab(sql: sql)
-        feature.workspaceSection = .sql
+        model.openDatabaseQuery(profileID: profile.id, sql: sql)
     }
 
     private func copyToPasteboard(_ value: String) {
@@ -985,10 +933,13 @@ struct DatabaseSidebarView: View {
     }
 
     private func openTable(_ profile: DatabaseProfile, table: String, section: DatabaseWorkspaceSection, sql: String = "") {
-        model.selectDatabaseWorkspace(profileID: profile.id, table: table)
-        guard model.databaseFeatureIfActive === feature, feature.selectedProfileID == profile.id else { return }
-        if !sql.isEmpty { feature.addSQLTab(sql: sql) }
-        feature.workspaceSection = section
+        if section == .sql {
+            model.openDatabaseQuery(profileID: profile.id, sql: sql)
+        } else {
+            model.selectDatabaseWorkspace(profileID: profile.id, table: table)
+            guard model.databaseFeatureIfActive === feature, feature.selectedProfileID == profile.id else { return }
+            feature.workspaceSection = section
+        }
     }
 
     private func executeTableAction(_ action: DatabaseTableContextAction) {
@@ -996,11 +947,10 @@ struct DatabaseSidebarView: View {
         let sql = action.kind == .clear
             ? "DELETE FROM \(quotedIdentifier(action.table, kind: action.profile.kind));"
             : "DROP TABLE \(quotedIdentifier(action.table, kind: action.profile.kind));"
-        model.selectDatabaseWorkspace(profileID: action.profile.id)
+        model.openDatabaseQuery(profileID: action.profile.id, sql: sql)
         guard model.databaseFeatureIfActive === feature, feature.selectedProfileID == action.profile.id else { return }
-        feature.addSQLTab(sql: sql)
-        feature.workspaceSection = .sql
         guard let tabID = feature.selectedSQLTabID else { return }
+        model.showToolWindow(.databaseServices)
         Task {
             guard model.databaseFeatureIfActive === feature, feature.selectedProfileID == action.profile.id else { return }
             await feature.runSQL(in: tabID, confirmedRisk: true)
@@ -1297,9 +1247,7 @@ private struct DatabaseDBXImportSheet: View {
     private var unlockView: some View {
         VStack(spacing: 14) {
             Spacer()
-            Image(systemName: isEncrypted ? "lock.doc" : "doc.text.magnifyingglass")
-                .font(LitheTheme.uiFont(size: 24, weight: .medium))
-                .foregroundStyle(LitheTheme.accent)
+            LitheIDEAIcon(resourcePath: isEncrypted ? "expui/general/locked.svg" : "expui/general/import.svg", size: 16, preservesOriginalColors: true)
             Text(isEncrypted ? "Encrypted DBX Export" : "Reading DBX Export")
                 .font(LitheTheme.uiFont(size: 13, weight: .semibold))
             if isEncrypted {
@@ -1343,7 +1291,7 @@ private struct DatabaseDBXImportSheet: View {
                 summaryValue(plan.folders.count, label: "Folders")
                 Spacer()
                 if plan.wasEncrypted {
-                    Label("Passwords decrypted", systemImage: "lock.open.fill")
+                    Text("Passwords decrypted")
                         .font(LitheTheme.uiFont(size: 10, weight: .medium))
                         .foregroundStyle(LitheTheme.success)
                 }
@@ -1361,8 +1309,7 @@ private struct DatabaseDBXImportSheet: View {
                     }
                     if !plan.unsupportedTypes.isEmpty {
                         HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(LitheTheme.warning)
+                            LitheIDEAIcon(resourcePath: "expui/status/warning.svg", size: 16, preservesOriginalColors: true)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Unsupported DBX database types")
                                     .font(LitheTheme.uiFont(size: 11, weight: .semibold))
@@ -1396,16 +1343,14 @@ private struct DatabaseDBXImportSheet: View {
             else { selectedIDs.insert(candidate.id) }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: candidate.isDuplicate ? "minus.circle" : (isSelected ? "checkmark.square.fill" : "square"))
-                    .font(LitheTheme.uiFont(size: 12, weight: .medium))
-                    .foregroundStyle(candidate.isDuplicate ? LitheTheme.tertiaryText : (isSelected ? LitheTheme.accent : LitheTheme.secondaryText))
+                LitheIDEAIcon(resourcePath: candidate.isDuplicate ? "commit/checkBoxDisabled.svg" : (isSelected ? "commit/checkBoxSelected.svg" : "commit/checkBox.svg"), size: 16, preservesOriginalColors: true)
                     .frame(width: 18)
                 DatabaseBrandIcon(kind: candidate.profile.kind, size: 18)
                     .frame(width: 22)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 7) {
                         Text(candidate.profile.name)
-                            .font(LitheTheme.uiFont(size: 11.5, weight: .semibold))
+                            .font(LitheTheme.uiFont(size: 13))
                             .lineLimit(1)
                         if candidate.isDuplicate {
                             Text("Duplicate")
@@ -1440,8 +1385,8 @@ private struct DatabaseDBXImportSheet: View {
         }
         .buttonStyle(.litheNoPress)
         .disabled(candidate.isDuplicate)
-        .background(isSelected ? LitheTheme.accent.opacity(0.08) : LitheTheme.inputBackground.opacity(0.35))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .litheRowHover(isActive: isSelected, activeBackground: LitheTheme.subtleSelection,
+                       hoverBackground: candidate.isDuplicate ? .clear : LitheTheme.hoverBackground)
     }
 
     private func candidateSubtitle(_ profile: DatabaseProfile) -> String {
@@ -1893,7 +1838,7 @@ struct DatabaseConnectionEditor: View {
                             }
                         }
                     } label: {
-                        Label("Safety", systemImage: "shield")
+                        Text("Safety")
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
                             .onTapGesture { safetyExpanded.toggle() }
@@ -1985,7 +1930,7 @@ struct DatabaseConnectionEditor: View {
                             }
                         }
                     } label: {
-                        Label("Advanced network", systemImage: "network")
+                        Text("Advanced network")
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
                             .onTapGesture { networkExpanded.toggle() }

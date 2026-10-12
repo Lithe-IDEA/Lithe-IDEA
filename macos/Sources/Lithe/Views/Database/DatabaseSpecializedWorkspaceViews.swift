@@ -5,6 +5,7 @@ struct RedisWorkspaceView: View {
     @EnvironmentObject private var feature: DatabaseFeatureModel
     @State private var pattern = "*"
     @FocusState private var patternFocused: Bool
+    @FocusState private var detailField: String?
     @State private var stringDraft = ""
     @State private var hashDraft = "{}"
     @State private var ttlDraft = ""
@@ -188,8 +189,8 @@ struct RedisWorkspaceView: View {
                             .font(LitheTheme.uiFont(size: 9.5)).foregroundStyle(LitheTheme.secondaryText)
                     }
                     Spacer()
-                    Button { request(.deleteKey(detail.key)) } label: { Image(systemName: "trash") }
-                        .litheIconButton().help("Delete key")
+                    Button { request(.deleteKey(detail.key)) } label: { LitheIDEAIcon(resourcePath: "expui/general/delete.svg", size: 16, preservesOriginalColors: true) }
+                        .litheToolbarIconButton().help("Delete key")
                         .foregroundStyle(LitheTheme.error)
                 }
                 .padding(12)
@@ -222,15 +223,15 @@ struct RedisWorkspaceView: View {
 
     private func renameAndTTL(_ detail: RedisKeyDetail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            specializedSectionTitle("Key settings", systemImage: "gearshape")
+            specializedSectionTitle("Key settings")
             HStack(spacing: 7) {
-                TextField("Key name", text: $renameDraft).textFieldStyle(.roundedBorder)
+                TextField("Key name", text: $renameDraft).focused($detailField, equals: "key").modifier(LitheCommitDialogInputStyle(focused: detailField == "key"))
                 Button("Rename") { request(.rename(detail.key, renameDraft)) }
                     .buttonStyle(LitheSecondaryButtonStyle())
                     .disabled(renameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || renameDraft == detail.key)
             }
             HStack(spacing: 7) {
-                TextField("TTL seconds (-1 = persistent)", text: $ttlDraft).textFieldStyle(.roundedBorder).frame(maxWidth: 240)
+                TextField("TTL seconds (-1 = persistent)", text: $ttlDraft).focused($detailField, equals: "ttl").modifier(LitheCommitDialogInputStyle(focused: detailField == "ttl")).frame(maxWidth: 240)
                 Button("Set TTL") {
                     guard let ttl = Int64(ttlDraft.trimmingCharacters(in: .whitespacesAndNewlines)), ttl >= -1 else {
                         feature.errorMessage = "Redis TTL must be -1 or a non-negative number of seconds."
@@ -245,9 +246,9 @@ struct RedisWorkspaceView: View {
 
     private func stringEditor(_ detail: RedisKeyDetail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            specializedSectionTitle("String value", systemImage: "text.alignleft")
+            specializedSectionTitle("String value")
             TextEditor(text: $stringDraft)
-                .font(LitheTheme.uiFont(size: 12, design: .monospaced))
+                .font(LitheTheme.codeFont)
                 .scrollContentBackground(.hidden)
                 .padding(7).frame(minHeight: 230)
                 .litheRoundedControlBackground(LitheTheme.inputBackground)
@@ -264,11 +265,11 @@ struct RedisWorkspaceView: View {
 
     private func hashEditor(_ detail: RedisKeyDetail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            specializedSectionTitle("Hash fields", systemImage: "curlybraces.square")
+            specializedSectionTitle("Hash fields")
             Text("Edit the field/value mapping as a JSON object. Saving replaces this Hash while preserving its TTL.")
                 .font(LitheTheme.uiFont(size: 9.5)).foregroundStyle(LitheTheme.secondaryText)
             TextEditor(text: $hashDraft)
-                .font(LitheTheme.uiFont(size: 12, design: .monospaced))
+                .font(LitheTheme.codeFont)
                 .scrollContentBackground(.hidden)
                 .padding(7).frame(minHeight: 230)
                 .litheRoundedControlBackground(LitheTheme.inputBackground)
@@ -343,6 +344,7 @@ struct NacosWorkspaceView: View {
     @EnvironmentObject private var feature: DatabaseFeatureModel
     private enum SearchField: Hashable { case dataID, configGroup, service, serviceGroup }
     @FocusState private var focusedSearch: SearchField?
+    @FocusState private var detailField: String?
     @State private var section: NacosSection = .configs
     @State private var dataIDSearch = ""
     @State private var groupSearch = ""
@@ -409,20 +411,19 @@ struct NacosWorkspaceView: View {
 
     private var workspaceHeader: some View {
         HStack(spacing: 10) {
-            Image(systemName: "slider.horizontal.3")
-                .font(LitheTheme.uiFont(size: 13, weight: .semibold)).foregroundStyle(Color.teal)
+            DatabaseBrandIcon(kind: .nacos, size: 16)
                 .frame(width: 28, height: 28).background(Color.teal.opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 7))
             VStack(alignment: .leading, spacing: 1) {
-                Text("Nacos Configuration & Services").font(LitheTheme.uiFont(size: 12.5, weight: .semibold))
+                Text("Nacos Configuration & Services").font(LitheTheme.uiFont(size: 13))
                 Text("Namespace \(profile?.database.isEmpty == false ? profile!.database : "public")")
                     .font(LitheTheme.uiFont(size: 9.5)).foregroundStyle(LitheTheme.secondaryText)
             }
             Spacer()
-            Button { Task { await feature.loadNacosConfigs(dataId: dataIDSearch, group: groupSearch); await feature.loadNacosServices(serviceName: serviceSearch, group: serviceGroupSearch) } } label: { Image(systemName: "arrow.clockwise") }
-                .litheIconButton().help("Refresh Nacos workspace")
+            Button { Task { await feature.loadNacosConfigs(dataId: dataIDSearch, group: groupSearch); await feature.loadNacosServices(serviceName: serviceSearch, group: serviceGroupSearch) } } label: { LitheIDEAIcon(resourcePath: "expui/general/refresh.svg", size: 16, preservesOriginalColors: true) }
+                .litheToolbarIconButton().help("Refresh Nacos workspace")
                 .disabled(feature.isLoading || profile == nil)
         }
-        .padding(.horizontal, 12).frame(height: 44).foregroundStyle(LitheTheme.primaryText).litheWorkbenchSurface(LitheTheme.toolHeader)
+        .padding(.horizontal, 6).frame(height: LitheTheme.Metrics.toolWindowHeaderHeight).foregroundStyle(LitheTheme.primaryText).litheWorkbenchSurface(LitheTheme.toolHeader)
     }
 
     private var configurations: some View {
@@ -435,7 +436,7 @@ struct NacosWorkspaceView: View {
                     LitheSearchTextField("Group", text: $groupSearch)
                         .focused($focusedSearch, equals: .configGroup)
                         .litheSearchField(isFocused: focusedSearch == .configGroup)
-                    Button { Task { await feature.loadNacosConfigs(dataId: dataIDSearch, group: groupSearch) } } label: { Image(systemName: "magnifyingglass") }.litheIconButton()
+                    Button { Task { await feature.loadNacosConfigs(dataId: dataIDSearch, group: groupSearch) } } label: { LitheIDEAIcon(resourcePath: "expui/general/search.svg", size: 16, preservesOriginalColors: true) }.litheToolbarIconButton()
                 }
                 .padding(10)
                 HStack {
@@ -476,19 +477,19 @@ struct NacosWorkspaceView: View {
     private var configEditor: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                TextField("Data ID", text: $draftDataID).textFieldStyle(.roundedBorder)
-                TextField("Group", text: $draftGroup).textFieldStyle(.roundedBorder).frame(width: 150)
-                TextField("Type (optional)", text: $draftType).textFieldStyle(.roundedBorder).frame(width: 135)
+                TextField("Data ID", text: $draftDataID).focused($detailField, equals: "id").modifier(LitheCommitDialogInputStyle(focused: detailField == "id"))
+                TextField("Group", text: $draftGroup).focused($detailField, equals: "group").modifier(LitheCommitDialogInputStyle(focused: detailField == "group")).frame(width: 150)
+                TextField("Type (optional)", text: $draftType).focused($detailField, equals: "type").modifier(LitheCommitDialogInputStyle(focused: detailField == "type")).frame(width: 135)
                 Spacer()
                 if feature.nacosSelectedConfig != nil {
-                    Button { request(.delete(draftDataID, draftGroup)) } label: { Image(systemName: "trash") }
-                        .litheIconButton().foregroundStyle(LitheTheme.error).help("Delete configuration")
+                    Button { request(.delete(draftDataID, draftGroup)) } label: { LitheIDEAIcon(resourcePath: "expui/general/delete.svg", size: 16, preservesOriginalColors: true) }
+                        .litheToolbarIconButton().foregroundStyle(LitheTheme.error).help("Delete configuration")
                 }
             }
             .padding(12).litheWorkbenchSurface(LitheTheme.toolHeader)
             Rectangle().fill(LitheTheme.divider).frame(height: 1)
             TextEditor(text: $draftContent)
-                .font(LitheTheme.uiFont(size: 12, design: .monospaced)).scrollContentBackground(.hidden)
+                .font(LitheTheme.codeFont).scrollContentBackground(.hidden)
                 .padding(12).litheWorkbenchSurface(LitheTheme.editor)
             Rectangle().fill(LitheTheme.divider).frame(height: 1)
             HStack {
@@ -514,7 +515,7 @@ struct NacosWorkspaceView: View {
                     LitheSearchTextField("Group", text: $serviceGroupSearch)
                         .focused($focusedSearch, equals: .serviceGroup)
                         .litheSearchField(isFocused: focusedSearch == .serviceGroup)
-                    Button { Task { await feature.loadNacosServices(serviceName: serviceSearch, group: serviceGroupSearch) } } label: { Image(systemName: "magnifyingglass") }.litheIconButton()
+                    Button { Task { await feature.loadNacosServices(serviceName: serviceSearch, group: serviceGroupSearch) } } label: { LitheIDEAIcon(resourcePath: "expui/general/search.svg", size: 16, preservesOriginalColors: true) }.litheToolbarIconButton()
                 }.padding(10)
                 Text("\(feature.nacosServiceTotalCount) services")
                     .font(LitheTheme.uiFont(size: 9.5)).foregroundStyle(LitheTheme.secondaryText).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.bottom, 8)
@@ -601,8 +602,8 @@ private enum NacosSection: Hashable { case configs, services }
 private enum NacosPendingAction { case publish(String, String, String, String), delete(String, String) }
 
 @ViewBuilder
-private func specializedSectionTitle(_ title: LocalizedStringKey, systemImage: String) -> some View {
-    Label(title, systemImage: systemImage).font(LitheTheme.uiFont(size: 11, weight: .semibold)).foregroundStyle(LitheTheme.primaryText)
+private func specializedSectionTitle(_ title: LocalizedStringKey) -> some View {
+    Text(title).font(LitheTheme.uiFont(size: 13)).foregroundStyle(LitheTheme.primaryText)
 }
 
 private func specializedEmptyState(symbol: String, title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
@@ -616,8 +617,7 @@ private func specializedEmptyState(symbol: String, title: LocalizedStringKey, de
 
 private func specializedErrorBanner(message: String, retry: @escaping () -> Void) -> some View {
     HStack(spacing: 8) {
-        Image(systemName: "exclamationmark.triangle.fill")
-            .foregroundStyle(LitheTheme.error)
+        LitheIDEAIcon(resourcePath: "expui/status/warning.svg", size: 16, preservesOriginalColors: true)
         Text(message)
             .font(LitheTheme.uiFont(size: 10.5))
             .foregroundStyle(LitheTheme.primaryText)
@@ -625,9 +625,9 @@ private func specializedErrorBanner(message: String, retry: @escaping () -> Void
             .textSelection(.enabled)
         Spacer(minLength: 4)
         Button(action: retry) {
-            Image(systemName: "arrow.clockwise")
+            LitheIDEAIcon(resourcePath: "expui/general/refresh.svg", size: 16, preservesOriginalColors: true)
         }
-        .litheIconButton()
+        .litheToolbarIconButton()
         .help("Retry")
     }
     .padding(.horizontal, 10)

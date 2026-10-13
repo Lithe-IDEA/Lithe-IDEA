@@ -4,7 +4,7 @@
 
 ## 先说结论
 
-Lithe 的插件管理改成和 IntelliJ IDEA 一样的“插件市场 / 已安装”两个标签。插件从“插件仓库源”（一个 JSON 索引文件）里列出：默认源是主仓库的 `Plugins/marketplace/index.json`，用户还能添加第三方源（HTTPS 索引地址，或 GitHub 仓库地址，自动指向仓库根目录的 `lithe-plugin-index.json`）。
+Lithe 的插件管理改成和 IntelliJ IDEA 一样的“插件市场 / 已安装”两个标签。插件从“插件仓库源”（一个 JSON 索引文件）里列出：默认源是主仓库的 `Plugins/marketplace/index.json`；另外预置一个社区源 Lithe Store（`Lithe-IDEA/Lithe-store` 仓库，默认开启、可删除）；用户还能添加第三方源（HTTPS 索引地址，或 GitHub 仓库地址，自动指向仓库根目录的 `lithe-plugin-index.json`）。
 
 “官方”必须同时满足两点：来自默认源，并且带 Lithe 发布者签名。第三方源里的插件一律是“社区插件”：不签名，靠索引里固定的 SHA-256 和安装前的确认框保证用户知道自己装了什么。
 
@@ -57,11 +57,19 @@ Lithe 的插件管理改成和 IntelliJ IDEA 一样的“插件市场 / 已安�
 3. **索引校验在 Swift 里实现。** Windows 以后也要用同一套规则，放在 Rust Core 可以只写一次。
 4. **允许任意 HTTPS 下载地址。** 这样“来源仓库”无法与下载物对应，用户看到的仓库可能不是包的真正来源，所以限制为该仓库自己的 Release 资产。
 
+**预置社区源。** Lithe Store 是官方维护的社区插件索引，随 Lithe 预置，免得用户第一次打开插件市场时要先找源地址。它在信任上与用户手动添加的第三方源完全相同：插件显示为“社区”、不能用 `dev.lithe.*`、安装前必须确认。用户删除后，`sources.json` 的 `removedPresetSourceIDs` 记住这次删除，下次启动不会再加回来；用户停用只改变启用状态。
+
+**预置源的 ID。** 已安装插件只记录来源 ID（`PluginMarketplaceProvenance.sourceID`），更新、重装和“来自其他源”判断都按 ID 匹配。因此 Lithe Store 的 ID 不用固定字符串，而用与手动添加相同的规则从索引 URL 派生（`PluginMarketplaceSource.id(forIndexURL:)`）：无论是预置的、在没有预置的旧版本里手动添加的，还是删除后重新添加的，ID 都一样，插件不会因此找不到来源。GitHub 的 owner/仓库名不区分大小写：重新添加时，大小写不同的同一索引地址会取回预置 ID；旧版本按其他大小写手动添加的记录则保留原 ID 和启用状态，并代替预置源，不再额外插入一份。
+
+正确做法：Store 的收录、校验、版本追踪规则写在 Lithe-store 仓库的 `docs/`，主仓库只保存源地址常量。
+
+不要这样做：把 Lithe Store 当成官方源，或者为了“推荐”而给它的插件更高的信任。
+
 ## 后果
 
 - 新插件只需要进入某个索引，宿主不用改代码。
 - 首个 PHP 声明式包发布前，官方索引是空的；合入后工作流会立即发布 `plugin-php-support-v1.0.0` 并开 PR 填充索引，客户端刷新时从仓库 HEAD 读取。
-- Lithe 版本 Release 里的 `Lithe-PHP-Support-<版本>-<架构>.zip` 只为旧客户端保留，之后可以移除。
+- Lithe 版本 Release 不再附带 `Lithe-PHP-Support-<版本>-<架构>.zip`。发版时只需要兼容 0.6.1 及之后的客户端，它们从官方索引下载插件；0.6.0 及更早的客户端不再从 Lithe Release 获得 PHP 包。
 - 社区插件不签名，安全性依赖用户确认；确认框必须完整列出程序，不能省略。
 - Windows 目前只共享契约和 Rust 校验，还没有界面。
 

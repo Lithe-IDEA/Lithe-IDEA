@@ -15,10 +15,13 @@ struct ProjectTreeSelectionTests {
         let tree = ProjectTreeKeyboardCommandView(frame: NSRect(x: 0, y: 0, width: 200, height: 300))
         defer { tree.removeMonitor(); window.makeFirstResponder(nil); window.close() }
         window.contentView?.addSubview(tree)
+        var active = false
+        tree.focusChanged = { active = $0 }
         var keys: [ProjectTreeNavigationKey] = []
         var extended: [Bool] = []
         tree.navigate = { key, extending in keys.append(key); extended.append(extending) }
         _ = tree.handle(try mouseDown(at: NSPoint(x: 50, y: 50), in: window))
+        #expect(active, "Tree pointer input must activate the shared selection renderer")
         for code: UInt16 in [123, 124, 125, 126] {
             let event = try #require(NSEvent.keyEvent(
                 with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
@@ -26,6 +29,7 @@ struct ProjectTreeSelectionTests {
                 charactersIgnoringModifiers: "", isARepeat: false, keyCode: code))
             #expect(tree.handle(event) == nil, "Tree arrow must not reach the editor")
         }
+        #expect(active, "Arrow navigation must retain the tree selection color")
         #expect(keys == [.left, .right, .down, .up])
         #expect(extended == [false, false, false, false])
         let shiftDown = try #require(NSEvent.keyEvent(
@@ -41,6 +45,7 @@ struct ProjectTreeSelectionTests {
             charactersIgnoringModifiers: "", isARepeat: false, keyCode: 125))
         #expect(tree.handle(down) != nil)
         #expect(keys.count == 5)
+        #expect(!active, "Clicking another region must use the inactive selection color")
     }
 
     @Test

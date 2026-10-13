@@ -67,12 +67,12 @@ struct LitheToolWindowActivityTracker: NSViewRepresentable {
         context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
             guard let view = context.coordinator.view, let window = view.window,
                   event.window === window else { return event }
-            let clickedInside = view.bounds.contains(view.convert(event.locationInWindow, from: nil))
-            if context.coordinator.isActive != clickedInside {
-                DispatchQueue.main.async {
-                    guard context.coordinator.view != nil else { return }
-                    context.coordinator.isActive = clickedInside
-                }
+            let clickedInside = !view.isHiddenOrHasHiddenAncestor
+                && view.bounds.contains(view.convert(event.locationInWindow, from: nil))
+            DispatchQueue.main.async {
+                guard context.coordinator.view != nil else { return }
+                // Compare after earlier pointer updates, so fast inside/outside clicks cannot leave stale activity.
+                if context.coordinator.isActive != clickedInside { context.coordinator.isActive = clickedInside }
             }
             return event
         }
@@ -108,19 +108,29 @@ struct LitheToolWindowActivityTracker: NSViewRepresentable {
         func observeFocus() {
             stopObservingFocus()
             guard let window = view?.window else { return }
-            lastResponder = window.firstResponder
+            lastResponder = Self.focusOwner(window.firstResponder)
             focusObserver = NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification,
                 object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let self, let view = self.view, let window = view.window,
-                          self.lastResponder !== window.firstResponder else { return }
-                    self.lastResponder = window.firstResponder
-                    guard let responder = window.firstResponder as? NSView else { return }
+                    guard let self, let view = self.view, let window = view.window else { return }
+                    let owner = Self.focusOwner(window.firstResponder)
+                    guard self.lastResponder !== owner else { return }
+                    self.lastResponder = owner
+                    guard let responder = owner as? NSView else {
+                        self.isActive = false
+                        return
+                    }
                     let rect = view.convert(responder.visibleRect.intersection(responder.bounds), from: responder)
                     let active = view.bounds.intersects(rect) && !responder.isHiddenOrHasHiddenAncestor
                     if self.isActive != active { self.isActive = active }
                 }
             }
+        }
+
+        // Fields in the same window share a native field editor; track the edited control instead.
+        private static func focusOwner(_ responder: NSResponder?) -> NSResponder? {
+            guard let editor = responder as? NSTextView, editor.isFieldEditor else { return responder }
+            return editor.delegate as? NSView ?? editor
         }
 
         init(isActive: Binding<Bool>) { _isActive = isActive }

@@ -61,6 +61,17 @@ struct EditorTabOrderFeatureModelTests {
             #expect(active == expected, "Focus rect: \(region.convert(responder.visibleRect, from: responder)); region: \(region.bounds); responder frame: \(responder.frame)")
             #expect(otherActive != expected, "Offscreen document bounds must not activate a neighboring region")
         }
+        let insideField = NSTextField(frame: NSRect(x: 10, y: 10, width: 120, height: 24))
+        let outsideField = NSTextField(frame: NSRect(x: 10, y: 10, width: 120, height: 24))
+        region.addSubview(insideField)
+        other.addSubview(outsideField)
+        for (field, expected) in [(insideField, true), (outsideField, false), (insideField, true)] {
+            #expect(window.makeFirstResponder(field))
+            #expect((window.firstResponder as? NSTextView)?.isFieldEditor == true)
+            NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: window)
+            #expect(active == expected, "A shared field editor must follow the control being edited")
+            #expect(otherActive != expected)
+        }
         coordinator.stopObservingFocus()
         #expect(window.makeFirstResponder(other))
         NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: window)

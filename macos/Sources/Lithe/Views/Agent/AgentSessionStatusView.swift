@@ -34,11 +34,11 @@ enum AgentSessionStatusPresentation {
     }
 
     /// `7 turns 54 steps · 232 tok/s`; steps and speed require observed model calls.
-    static func summary(_ statistics: AgentSessionStatistics, locale: Locale) -> String {
+    static func summary(_ statistics: AgentSessionStatistics, locale: Locale, showsRate: Bool = true) -> String {
         var text = String(format: String(localized: "%lld turns"), statistics.turnCount)
         if let calls = statistics.modelCalls {
             text += " " + String(format: String(localized: "%lld steps"), calls.callCount)
-            if let rate = calls.outputTokensPerSecond { text += " · " + self.rate(rate, locale: locale) }
+            if showsRate, let rate = calls.outputTokensPerSecond { text += " · " + self.rate(rate, locale: locale) }
         }
         return text
     }
@@ -58,19 +58,20 @@ struct AgentSessionStatusView: View {
     let contextUsage: AgentContextUsage?
 
     var body: some View {
-        // Narrow panels drop the session summary first, then token usage;
-        // context occupancy always stays visible.
+        // Narrow panels first drop the speed (kept in the hover card), then the
+        // session summary, then token usage; context occupancy always stays.
         ViewThatFits(in: .horizontal) {
-            entries(showsSession: true, showsTokens: true)
-            entries(showsSession: false, showsTokens: true)
-            entries(showsSession: false, showsTokens: false)
+            entries(showsSession: true, showsRate: true, showsTokens: true)
+            entries(showsSession: true, showsRate: false, showsTokens: true)
+            entries(showsSession: false, showsRate: false, showsTokens: true)
+            entries(showsSession: false, showsRate: false, showsTokens: false)
         }
     }
 
-    private func entries(showsSession: Bool, showsTokens: Bool) -> some View {
-        HStack(spacing: 10) {
+    private func entries(showsSession: Bool, showsRate: Bool, showsTokens: Bool) -> some View {
+        HStack(spacing: 8) {
             if showsSession && statistics.turnCount > 0 {
-                AgentSessionSummaryView(statistics: statistics)
+                AgentSessionSummaryView(statistics: statistics, showsRate: showsRate)
             }
             if showsTokens, let tokens = statistics.tokens {
                 AgentTokenUsageView(tokens: tokens)
@@ -83,10 +84,14 @@ struct AgentSessionStatusView: View {
 
 struct AgentSessionSummaryView: View {
     let statistics: AgentSessionStatistics
+    var showsRate = true
     @Environment(\.locale) private var locale
 
     var body: some View {
-        Label(AgentSessionStatusPresentation.summary(statistics, locale: locale), systemImage: "gauge.with.dots.needle.33percent")
+        HStack(spacing: 4) {
+            Image(systemName: "gauge.with.dots.needle.33percent")
+            Text(AgentSessionStatusPresentation.summary(statistics, locale: locale, showsRate: showsRate))
+        }
             .lineLimit(1)
             .monospacedDigit()
             .padding(.vertical, 4)
@@ -144,7 +149,10 @@ struct AgentTokenUsageView: View {
     @Environment(\.locale) private var locale
 
     var body: some View {
-        Label(AgentSessionStatusPresentation.tokenSummary(tokens, locale: locale), systemImage: "cylinder.split.1x2")
+        HStack(spacing: 4) {
+            Image(systemName: "cylinder.split.1x2")
+            Text(AgentSessionStatusPresentation.tokenSummary(tokens, locale: locale))
+        }
             .lineLimit(1)
             .monospacedDigit()
             .padding(.vertical, 4)

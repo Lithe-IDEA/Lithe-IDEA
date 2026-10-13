@@ -453,6 +453,65 @@ struct AgentConversationPresentationTests {
         }
     }
 
+    @Test
+    func normalWidthComposerKeepsEveryStatusEntryVisible() throws {
+        var conversation = AgentConversation()
+        conversation.completedTurns = [AgentTurnStatistics(id: "turn", startedAt: .now)]
+        conversation.recordModelCall(try #require(AgentModelCall.parse([
+            "api": "anthropicMessages", "status": 200, "streaming": true, "firstTokenMs": 700, "durationMs": 1250,
+            "usage": ["inputTokens": 62063, "cacheReadTokens": 61696, "cacheWriteTokens": 0, "outputTokens": 165]
+        ])))
+        let usage = try #require(AgentContextUsage(usedTokens: 62_000, capacityTokens: 1_000_000))
+        // 417pt is the default Agent panel width reported in review; the
+        // session summary must not be the entry that disappears there.
+        for scheme in [ColorScheme.dark, .light] {
+            let composer = AgentComposerView(
+                agents: [], selectedAgent: nil, isResponding: false, isBlocked: false,
+                onSend: { _, _ in }, onCancel: {}, onSelectAgent: { _ in }, onOpenSettings: {}, onError: { _ in },
+                contextUsage: usage, sessionStatistics: conversation.sessionStatistics)
+            let host = NSHostingView(rootView: composer.frame(width: 417, height: 150)
+                .background(AgentPanelStyle.canvas).environment(\.colorScheme, scheme)
+                .environment(\.locale, Locale(identifier: "en_US")))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 417, height: 150),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            defer { window.close() }
+            window.contentView = host
+            host.frame.size = NSSize(width: 417, height: 150)
+            host.layoutSubtreeIfNeeded()
+            // The bar's width at 417pt, less composer and bar insets, the
+            // divider and the attach control collapsed to its icon.
+            let available: CGFloat = 417 - 16 - 20 - 1 - 16 - 14
+            for statistics in [conversation.sessionStatistics, try longSession()] {
+                let width = { (view: AnyView) in NSHostingView(rootView: view.font(LitheTheme.uiFont(size: 11))).fittingSize.width }
+                let required = width(AnyView(AgentSessionSummaryView(statistics: statistics, showsRate: false)))
+                    + width(AnyView(AgentTokenUsageView(tokens: try #require(statistics.tokens))))
+                    + width(AnyView(AgentContextUsageView(usage: usage))) + 16
+                #expect(required <= available, "The session summary stays visible at the default panel width")
+            }
+            if let folder = ProcessInfo.processInfo.environment["LITHE_AGENT_STATUS_SCREENSHOTS"] {
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                try data.write(to: URL(fileURLWithPath: folder)
+                    .appendingPathComponent("status-composer-\(scheme == .dark ? "dark" : "light").png"))
+            }
+        }
+    }
+
+    /// 7 turns and 54 streamed calls with a multi-million token cached prompt.
+    private func longSession() throws -> AgentSessionStatistics {
+        var conversation = AgentConversation()
+        conversation.completedTurns = (0..<7).map { AgentTurnStatistics(id: "turn-\($0)", startedAt: .now) }
+        for _ in 0..<54 {
+            conversation.recordModelCall(try #require(AgentModelCall.parse([
+                "api": "anthropicMessages", "status": 200, "streaming": true, "firstTokenMs": 950, "durationMs": 7400,
+                "usage": ["inputTokens": 1100, "cacheReadTokens": 65600, "cacheWriteTokens": 900, "outputTokens": 1500]
+            ])))
+        }
+        return conversation.sessionStatistics
+    }
+
     /// Opt-in visual review of the status bar and its cards in the review language.
     private func captureStatusScreenshots(folder: URL) throws {
         let locale = Locale(identifier: "en_US")

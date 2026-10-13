@@ -94,7 +94,10 @@ while IFS=$'\t' read -r status first_path _; do
             enable_all_validation
             ;;
         .github/workflows/ci-macos.yml)
+            # The shared Swift build job also hosts the database filtered
+            # suite, so a workflow change exercises both.
             swift=true
+            swift_database=true
             rust_core=true
             macos_release=true
             git_validation=true
@@ -410,6 +413,22 @@ while IFS=$'\t' read -r status first_path _; do
             ;;
     esac
 done < <(git diff --name-status --find-renames "$BASE_REVISION" "$HEAD_REVISION")
+
+if [[ "${LITHE_CI_DRAFT_PULL_REQUEST:-false}" == "true" ]]; then
+    # Draft pull requests keep the Linux-only lanes but defer every macOS and
+    # Windows runner lane. The organization shares five macOS runners, so
+    # iterative draft pushes would otherwise queue every ready pull request.
+    # Marking the pull request ready for review triggers a full classification.
+    swift=false
+    plugins=false
+    swift_database=false
+    rust_core=false
+    macos_release=false
+    windows=false
+    windows_rust=false
+    java_jdt=false
+    git_validation=false
+fi
 
 printf 'swift=%s\n' "$swift"
 printf 'plugins=%s\n' "$plugins"

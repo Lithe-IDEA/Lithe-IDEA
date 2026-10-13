@@ -294,6 +294,12 @@ assert_classification metadata \
 assert_classification classifier \
     "$(classification true true true true true true true true false false true true)" \
     modify_classifier
+LITHE_CI_DRAFT_PULL_REQUEST=true assert_classification draft-defers-runner-lanes \
+    "$(classification false false false false true false false false false false false false)" \
+    modify_unknown_script
+LITHE_CI_DRAFT_PULL_REQUEST=true assert_classification draft-keeps-linux-lanes \
+    "$(classification false false false false false false false false true false)" \
+    modify_rust_comment
 assert_classification rename-rust-to-markdown \
     "$(classification true true true true true true true true false false true true)" \
     rename_rust_to_markdown

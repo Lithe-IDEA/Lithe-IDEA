@@ -259,6 +259,13 @@ runs:
           ${{ steps.cargo_build_key.outputs.prefix }}-arm64-
           ${{ steps.cargo_build_key.outputs.prefix }}-x86_64-
 
+    # save-macos-cargo-build-cache compares fingerprints against this marker so
+    # a job that fails before compiling any Rust does not store a duplicate.
+    - name: Mark restored Cargo compilation outputs
+      if: inputs.cargo-build == 'true'
+      shell: bash
+      run: touch "$RUNNER_TEMP/lithe-cargo-build-restored"
+
     - name: Discard incomplete Cargo compilation cache
       if: inputs.cargo-build == 'true' && steps.cargo_build.outcome == 'failure'
       shell: bash

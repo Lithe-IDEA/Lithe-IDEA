@@ -38,6 +38,11 @@ runs:
         elif [[ "$JOB_STATUS" == "success" ]]; then
           echo "save=true" >> "$GITHUB_OUTPUT"
           echo "key=$CACHE_KEY" >> "$GITHUB_OUTPUT"
+        elif [[ -f "$RUNNER_TEMP/lithe-cargo-build-restored" ]] && [[ -z "$(find "$GITHUB_WORKSPACE/rust/target" -path '*/.fingerprint/*' -newer "$RUNNER_TEMP/lithe-cargo-build-restored" -print -quit)" ]]; then
+          # Nothing compiled since the restore: a partial entry would only
+          # duplicate the restored one and use up the repository cache quota.
+          echo "No Rust units compiled since the restore; skipping partial save."
+          echo "save=false" >> "$GITHUB_OUTPUT"
         else
           echo "save=true" >> "$GITHUB_OUTPUT"
           echo "key=$CACHE_KEY-partial-$RUN_SUFFIX" >> "$GITHUB_OUTPUT"

@@ -481,6 +481,9 @@ final class MonacoWorkbenchSession: NSObject, ObservableObject, WKNavigationDele
     }
 
     private func bindSynchronization(_ document: EditorDocument) {
+        // Cross-file edits observe a mirror; only the document's own session
+        // may own the barriers that drain its visible editor before save/close.
+        guard scopedDocumentID == nil || scopedDocumentID == document.id else { return }
         let id = document.id.uuidString
         document.editorSynchronizationOwnerID = synchronizationOwnerID
         // The document retains its editor while it remains open, even if SwiftUI
@@ -517,7 +520,7 @@ final class MonacoWorkbenchSession: NSObject, ObservableObject, WKNavigationDele
         }
     }
 
-    private func register(_ document: EditorDocument) {
+    func register(_ document: EditorDocument) {
         let id = document.id.uuidString
         guard documents[id] == nil else { return }
         documentReferences[id] = DocumentReference(value: document)
@@ -559,6 +562,12 @@ final class MonacoWorkbenchSession: NSObject, ObservableObject, WKNavigationDele
             guard workspace.matches(documents: model.documentFeature.editorDocuments, workspaceURL: model.workspaceURL),
                   let document = model.openDocuments.first(where: { $0.url.standardizedFileURL == url.standardizedFileURL }),
                   !document.isReadOnly else { throw EditorDocument.DocumentError.editorNotSynchronized }
+            if scopedDocumentID != nil && scopedDocumentID != document.id {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    document.withSynchronizedEditor { continuation.resume(with: $0) }
+                }
+                try Task.checkCancellation()
+            }
             register(document)
             let context = MonacoDocumentContext(document: document, revision: revisions[document.id.uuidString] ?? 0,
                 workspaceURL: model.workspaceURL)

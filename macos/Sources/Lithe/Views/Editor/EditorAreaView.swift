@@ -500,7 +500,7 @@ struct EditorAreaView: View {
         }
         .contentShape(Rectangle())
         .litheContextMenu {
-            editorTabContextMenu(for: document, at: index)
+            editorTabContextMenu(for: document)
         }
         .onHover { isHovering in
             updateHoveredTab(.document(document.id), isHovering: isHovering)
@@ -1212,9 +1212,12 @@ struct EditorAreaView: View {
     }
 
     private func editorTabContextMenu(
-        for document: EditorDocument,
-        at index: Int
+        for document: EditorDocument
     ) -> [LitheContextMenuItem] {
+        let targets = model.editorTabOrderFeature.documentCloseTargets(for: document.id, in: groupID)
+        func documents(_ ids: [UUID]) -> [EditorDocument] {
+            ids.compactMap { id in model.openDocuments.first { $0.id == id } }
+        }
         var items: [LitheContextMenuItem] = [
             .action("Close", action: { model.requestCloseDocument(document) }),
             .action(
@@ -1226,30 +1229,30 @@ struct EditorAreaView: View {
             ),
             .action(
                 "Close Other Tabs",
-                isEnabled: model.openDocuments.count > 1,
+                isEnabled: !targets.other.isEmpty,
                 action: {
                     model.requestCloseDocuments(
-                        model.openDocuments.filter { $0.id != document.id },
+                        documents(targets.other),
                         preferredDocumentID: document.id
                     )
                 }
             ),
             .action(
                 "Close Tabs to the Left",
-                isEnabled: index > 0,
+                isEnabled: !targets.left.isEmpty,
                 action: {
                     model.requestCloseDocuments(
-                        Array(model.openDocuments.prefix(index)),
+                        documents(targets.left),
                         preferredDocumentID: document.id
                     )
                 }
             ),
             .action(
                 "Close Tabs to the Right",
-                isEnabled: index < model.openDocuments.count - 1,
+                isEnabled: !targets.right.isEmpty,
                 action: {
                     model.requestCloseDocuments(
-                        Array(model.openDocuments.dropFirst(index + 1)),
+                        documents(targets.right),
                         preferredDocumentID: document.id
                     )
                 }
@@ -1258,12 +1261,12 @@ struct EditorAreaView: View {
                 "Close Unmodified Tabs",
                 action: {
                     model.requestCloseDocuments(
-                        model.openDocuments.filter { !$0.isDirty },
+                        documents(targets.left + [document.id] + targets.right).filter { !$0.isDirty },
                         preferredDocumentID: document.id
                     )
                 }
             ),
-            .action("Close All Tabs", action: { model.requestCloseDocuments(model.openDocuments) }),
+            .action("Close All Tabs", action: { model.requestCloseDocuments(documents(targets.left + [document.id] + targets.right)) }),
             .separator,
             .submenu("Copy Path / Reference", items: [
                 .action("Copy Path", action: { model.copyProjectItemPath(document.url, relative: false) }),

@@ -18,6 +18,17 @@ final class EditorTabOrderFeatureModel: ObservableObject {
         items.filter { placements[$0] == group }
     }
 
+    /// Close menus operate on visible group order and leave mixed non-document tabs open.
+    func documentCloseTargets(for id: UUID, in group: UUID?) -> (other: [UUID], left: [UUID], right: [UUID]) {
+        let tabs = group.map { items(in: $0) } ?? items
+        let documents = tabs.compactMap { item -> UUID? in
+            guard case .document(let id) = item else { return nil }
+            return id
+        }
+        guard let index = documents.firstIndex(of: id) else { return ([], [], []) }
+        return (documents.filter { $0 != id }, Array(documents.prefix(index)), Array(documents.dropFirst(index + 1)))
+    }
+
     func selectedItem(in group: UUID) -> EditorTabItem? { groupSelections[group] }
 
     func focus(_ item: EditorTabItem) {

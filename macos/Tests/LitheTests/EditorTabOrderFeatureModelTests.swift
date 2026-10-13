@@ -8,6 +8,27 @@ import Testing
 @Suite("Editor tab order")
 @MainActor
 struct EditorTabOrderFeatureModelTests {
+    @Test func closeTargetsRespectGroupsMixedTabsAndReordering() throws {
+        let model = EditorTabOrderFeatureModel()
+        let a = UUID(), b = UUID(), c = UUID(), terminal = UUID()
+        model.reconcileDocuments(orderedIDs: [a, b, c])
+        model.moveToEnd(.terminal(terminal))
+        let left = try #require(model.groupLayout.groups.first)
+        #expect(model.drop(.document(c), into: left, side: .right))
+        let right = try #require(model.groupLayout.groups.last)
+        let isolated = model.documentCloseTargets(for: c, in: right)
+        #expect(isolated.other.isEmpty && isolated.left.isEmpty && isolated.right.isEmpty)
+        #expect(model.move(.document(b), before: .document(a)))
+        let targets = model.documentCloseTargets(for: a, in: left)
+        #expect(targets.other == [b])
+        #expect(targets.left == [b])
+        #expect(targets.right.isEmpty)
+        let first = model.documentCloseTargets(for: b, in: left)
+        #expect(first.left.isEmpty && first.right == [a])
+        #expect(model.items(in: left).contains(.terminal(terminal)))
+        #expect(model.documentCloseTargets(for: c, in: left).other.isEmpty)
+    }
+
     @Test(arguments: [2, 3])
     func nativeMultilineRowReleaseReordersWithoutSplitting(row: Int) async throws {
         let store = EditorTabOrderTestStore()

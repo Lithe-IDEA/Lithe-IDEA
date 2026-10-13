@@ -561,11 +561,15 @@ GitFeatureModel 写入及确认流程；只读历史/保存记录模式不提供
 区域焦点沿用 `LitheToolWindowActivityTracker`，应安装在列表所在区域，不能
 装在整个工作台后让多个列表同时变蓝。观察器按实际被编辑的输入框判断焦点，
 不能只比较 macOS 共用的 field editor（窗口内多个输入框共用的文本编辑器）；
-快速点击区域内再点击区域外时，延后的回调按执行顺序比较状态，避免留下旧活动色。
-卸载时移除事件观察器，延后回调不能继续修改已卸载区域。
+鼠标回调、焦点变化和卸载共用事件版本；延迟点击只有版本仍最新、窗口未变且
+当前 focus owner 未变时才能发布点击状态，否则按当前 responder 重算。
+卸载时清除活动状态并移除观察器；重新挂载立即同步当前可见焦点区域，并在布局
+完成后重新核对。旧挂载或较早点击的回调不能覆盖新焦点。
 
 项目树是已有键盘路由的特殊消费者：`ProjectTreeKeyboardCommands` 发布
-键盘归属变化，颜色与实际消费方向键的区域一致。直接套用普通区域观察器会在
+键盘归属变化，颜色与实际消费方向键的区域一致。通过窗口 didUpdate 及时识别
+新获得焦点的文本框，搜索框尚未输入字符时树就失焦；其他编辑器仍保留首次按键
+建立基线的异步聚焦处理。直接套用普通区域观察器会在
 文件打开后的 WebKit 异步聚焦中误判。惰性树内容的相等判断必须包含焦点，
 否则选择不变时不会刷新颜色。保留原有多选、上下键、右键和文件打开行为。
 
@@ -597,7 +601,12 @@ LitheTheme.selection : .clear)`；这种写法无法在窗口失焦时切换灰�
 窗口 key/inactive 状态，以及 24pt 树和 40pt 多行尺寸；
 `ProjectTreeSelectionTests` 检查方向键和多选；
 `EditorTabOrderFeatureModelTests.tabActivityFollowsNativeKeyboardFocusAcrossRegions`
-检查原生区域及共用输入编辑器之间的焦点转移。完整应用验收与组件回归分别记录，
+检查原生区域及共用输入编辑器之间的焦点转移、卸载失效和重新挂载同步；
+`delayedPointerActivityCannotOverrideNewerFocusOrRemount` 用可控回调队列验证
+较早鼠标写入不能覆盖新 responder（包括窗口通知尚未发布）或新挂载；
+`treeYieldsToSearchBeforeTypingButRetainsAsynchronousEditorFocus` 验证搜索框
+尚未输入即失焦，以及真实 WKWebView 异步聚焦仍保留项目树键盘归属。
+完整应用验收与组件回归分别记录，
 不由编译或单一页面截图推断整个产品已验证。
 
 深色新预览已通过真实鼠标验证 Settings 分类：点击分类显示主题色，点击右侧

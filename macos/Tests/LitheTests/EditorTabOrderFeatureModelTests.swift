@@ -75,7 +75,54 @@ struct EditorTabOrderFeatureModelTests {
         coordinator.stopObservingFocus()
         #expect(window.makeFirstResponder(other))
         NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: window)
-        #expect(active, "Unmounted trackers must stop changing tab activity")
+        #expect(!active, "Unmounted trackers must invalidate retained activity")
+        region.removeFromSuperview()
+        host.addSubview(region)
+        coordinator.observeFocus()
+        #expect(!active, "Remounting while details own focus must stay inactive")
+        coordinator.stopObservingFocus()
+        #expect(window.makeFirstResponder(insideField))
+        coordinator.observeFocus()
+        #expect(active, "Remounting must immediately recover the current focus owner")
+    }
+
+    @Test
+    func delayedPointerActivityCannotOverrideNewerFocusOrRemount() throws {
+        var active = false
+        var pending: [() -> Void] = []
+        let coordinator = LitheToolWindowActivityTracker.Coordinator(
+            isActive: Binding(get: { active }, set: { active = $0 }), schedule: { pending.append($0) })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { coordinator.stopObservingFocus(); window.makeFirstResponder(nil); window.close() }
+        let host = try #require(window.contentView)
+        let region = NSTextView(frame: NSRect(x: 0, y: 100, width: 400, height: 100))
+        let details = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 80))
+        host.addSubview(region); host.addSubview(details)
+        coordinator.view = region
+        #expect(window.makeFirstResponder(region))
+        coordinator.observeFocus()
+        pending.removeFirst()()
+        #expect(active)
+        for notify in [true, false] {
+            #expect(window.makeFirstResponder(region))
+            NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: window)
+            coordinator.queuePointerActivity(true)
+            #expect(window.makeFirstResponder(details))
+            if notify { NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: window) }
+            pending.removeFirst()()
+            #expect(!active, "A deferred click must yield to newer focus even before its notification")
+        }
+        coordinator.queuePointerActivity(true)
+        coordinator.stopObservingFocus()
+        coordinator.observeFocus()
+        pending.forEach { $0() }; pending.removeAll()
+        #expect(!active, "Callbacks from an earlier mount must not restore stale activity")
+        coordinator.queuePointerActivity(true)
+        coordinator.queuePointerActivity(false)
+        pending.forEach { $0() }; pending.removeAll()
+        #expect(!active, "Only the latest pointer event may publish activity")
     }
 
     @Test

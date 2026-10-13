@@ -3,6 +3,7 @@ import Foundation
 import LitheCoreContracts
 import SwiftUI
 import Testing
+import WebKit
 @testable import Lithe
 
 struct ProjectTreeSelectionTests {
@@ -46,6 +47,31 @@ struct ProjectTreeSelectionTests {
         #expect(tree.handle(down) != nil)
         #expect(keys.count == 5)
         #expect(!active, "Clicking another region must use the inactive selection color")
+    }
+
+    @Test
+    @MainActor
+    func treeYieldsToSearchBeforeTypingButRetainsAsynchronousEditorFocus() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let tree = ProjectTreeKeyboardCommandView(frame: NSRect(x: 0, y: 0, width: 200, height: 300))
+        let editor = WKWebView(frame: NSRect(x: 200, y: 0, width: 200, height: 150))
+        let search = NSTextField(frame: NSRect(x: 200, y: 200, width: 180, height: 24))
+        defer { tree.removeMonitor(); window.makeFirstResponder(nil); window.close() }
+        [tree, editor, search].forEach { window.contentView?.addSubview($0) }
+        var active = false
+        tree.focusChanged = { active = $0 }
+        _ = tree.handle(try mouseDown(at: NSPoint(x: 50, y: 50), in: window))
+        #expect(active)
+        #expect(window.makeFirstResponder(editor))
+        NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: window)
+        #expect(active, "Opening an editor asynchronously must retain tree keyboard ownership")
+        #expect(tree.handle(try commandKey("c", in: window)) == nil)
+        #expect(window.makeFirstResponder(search))
+        NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: window)
+        #expect(!active, "Search focus must deactivate the tree before any subsequent key event")
+        #expect(tree.handle(try commandKey("c", in: window)) != nil)
     }
 
     @Test

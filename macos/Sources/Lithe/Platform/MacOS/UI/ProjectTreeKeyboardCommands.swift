@@ -41,6 +41,7 @@ final class ProjectTreeKeyboardCommandView: NSView {
     var selectAllItems: (() -> Void)?
     var navigate: ((ProjectTreeNavigationKey, Bool) -> Void)?
     private var monitor: Any?
+    private var focusObserver: NSObjectProtocol?
     var focusChanged: ((Bool) -> Void)?
     private var ownsKeyboard = false {
         didSet { if ownsKeyboard != oldValue { focusChanged?(ownsKeyboard) } }
@@ -57,7 +58,16 @@ final class ProjectTreeKeyboardCommandView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         removeMonitor()
-        guard window != nil else { return }
+        guard let window else { return }
+        focusObserver = NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification,
+            object: window, queue: .main) { [weak self, weak window] _ in
+            MainActor.assumeIsolated {
+                guard let self, let window, self.ownsKeyboard else { return }
+                let responder = Self.focusOwner(window.firstResponder)
+                // Text input takes ownership immediately; retain the editor's asynchronous focus baseline.
+                if responder is NSTextField, responder !== self.responderAtClick { self.releaseKeyboard() }
+            }
+        }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
             Self.monitorResult(for: event, view: self)
         }
@@ -122,6 +132,8 @@ final class ProjectTreeKeyboardCommandView: NSView {
     func removeMonitor() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        if let focusObserver { NotificationCenter.default.removeObserver(focusObserver) }
+        focusObserver = nil
         releaseKeyboard()
     }
 

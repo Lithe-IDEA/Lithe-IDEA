@@ -69,11 +69,7 @@ struct LitheToolWindowActivityTracker: NSViewRepresentable {
                   event.window === window else { return event }
             let clickedInside = !view.isHiddenOrHasHiddenAncestor
                 && view.bounds.contains(view.convert(event.locationInWindow, from: nil))
-            DispatchQueue.main.async {
-                guard context.coordinator.view != nil else { return }
-                // Compare after earlier pointer updates, so fast inside/outside clicks cannot leave stale activity.
-                if context.coordinator.isActive != clickedInside { context.coordinator.isActive = clickedInside }
-            }
+            context.coordinator.queuePointerActivity(clickedInside)
             return event
         }
         return view
@@ -99,30 +95,60 @@ struct LitheToolWindowActivityTracker: NSViewRepresentable {
         var monitor: Any?
         private var focusObserver: NSObjectProtocol?
         private weak var lastResponder: NSResponder?
+        private var eventVersion = 0
+        private let schedule: (@escaping () -> Void) -> Void
+
+        func queuePointerActivity(_ clickedInside: Bool) {
+            guard let window = view?.window else { return }
+            eventVersion += 1
+            let version = eventVersion
+            let owner = Self.focusOwner(window.firstResponder)
+            schedule { [weak self, weak window] in
+                guard let self, let window, self.view?.window === window,
+                      self.eventVersion == version else { return }
+                if Self.focusOwner(window.firstResponder) !== owner {
+                    self.synchronizeFocus()
+                } else if self.isActive != clickedInside {
+                    self.isActive = clickedInside
+                }
+            }
+        }
+
+        private func synchronizeFocus() {
+            eventVersion += 1
+            guard let view, let window = view.window else { isActive = false; return }
+            lastResponder = Self.focusOwner(window.firstResponder)
+            guard let responder = lastResponder as? NSView else { isActive = false; return }
+            let rect = view.convert(responder.visibleRect.intersection(responder.bounds), from: responder)
+            let active = !view.isHiddenOrHasHiddenAncestor && !responder.isHiddenOrHasHiddenAncestor
+                && view.bounds.intersects(rect)
+            if isActive != active { isActive = active }
+        }
 
         func stopObservingFocus() {
             if let focusObserver { NotificationCenter.default.removeObserver(focusObserver) }
             focusObserver = nil; lastResponder = nil
+            eventVersion += 1
+            isActive = false
         }
 
         func observeFocus() {
             stopObservingFocus()
             guard let window = view?.window else { return }
-            lastResponder = Self.focusOwner(window.firstResponder)
+            synchronizeFocus()
+            // Recheck after SwiftUI assigns the tracking view's layout, unless newer input has arrived.
+            let version = eventVersion
+            schedule { [weak self] in
+                guard let self, self.eventVersion == version else { return }
+                self.synchronizeFocus()
+            }
             focusObserver = NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification,
                 object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self, let view = self.view, let window = view.window else { return }
                     let owner = Self.focusOwner(window.firstResponder)
                     guard self.lastResponder !== owner else { return }
-                    self.lastResponder = owner
-                    guard let responder = owner as? NSView else {
-                        self.isActive = false
-                        return
-                    }
-                    let rect = view.convert(responder.visibleRect.intersection(responder.bounds), from: responder)
-                    let active = view.bounds.intersects(rect) && !responder.isHiddenOrHasHiddenAncestor
-                    if self.isActive != active { self.isActive = active }
+                    self.synchronizeFocus()
                 }
             }
         }
@@ -133,7 +159,12 @@ struct LitheToolWindowActivityTracker: NSViewRepresentable {
             return editor.delegate as? NSView ?? editor
         }
 
-        init(isActive: Binding<Bool>) { _isActive = isActive }
+        init(isActive: Binding<Bool>, schedule: @escaping (@escaping () -> Void) -> Void = {
+            DispatchQueue.main.async(execute: $0)
+        }) {
+            _isActive = isActive
+            self.schedule = schedule
+        }
     }
 
     private final class TrackingView: NSView {

@@ -43,6 +43,9 @@ private enum WorkbenchWorkspaceMetrics {
 private enum WorkbenchTopBarMetrics {
     // IDEA reserves 78pt for macOS window controls, then leaves a small widget gap.
     static let leadingInset: CGFloat = 83
+    // ponytail: Reserve the reference's extra right-hand actions without adding them;
+    // replace this space with their actual widths if those actions join the toolbar.
+    static let executionTrailingSpace = 4 * LitheTheme.Metrics.toolbarHeight
     static let projectAvatarSize: CGFloat = 20
     static let projectAvatarLeadingInset: CGFloat = 6
     static let projectAvatarCenterX = leadingInset + projectAvatarLeadingInset + projectAvatarSize / 2
@@ -771,6 +774,8 @@ struct WorkbenchView: View {
                     stopExecutionButton
                 }
             }
+            Spacer(minLength: 0)
+                .frame(maxWidth: WorkbenchTopBarMetrics.executionTrailingSpace)
             settingsMenuButton
         }
         .padding(.leading, WorkbenchTopBarMetrics.leadingInset)

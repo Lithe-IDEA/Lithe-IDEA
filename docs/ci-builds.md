@@ -100,7 +100,8 @@ Xcode/SDK/macOS versions, build flags, dependency manifests, and build scripts.
 An architecture-specific job can restore the universal cache from its base
 branch. Final executables are not cached; Cargo still runs before packaging.
 A universal build without a universal entry falls back to an arm64 or
-x86_64 entry with the same toolchain identity. An interrupted cache restore is
+x86_64 entry with the same toolchain identity; single-slice builds do not fall
+back to the other slice. An interrupted cache restore is
 discarded, leaving the existing verified download cache as the fallback. Swift
 compilation products are not cached.
 

@@ -118,7 +118,7 @@ Cargo 编译缓存只在准备阶段恢复，保存由
   被中断的产物会重新编译，不会被当作有效结果。
 - universal 构建找不到 universal 条目时回退到同一工具链身份的 arm64、
   x86_64 单架构条目（来自 preview 发布工作流），至少复用一半 Rust 编译和
-  宿主侧 build script。
+  宿主侧 build script。单架构构建不回退到另一架构的条目，那份目标产物用不上。
 - PR 只恢复不保存：PR ref 作用域的条目 preview 读不到，却每个约 565 MB，
   会把 preview 自己的条目挤出配额。
 - macOS CI 的 release-build 超时为 60 分钟，覆盖冷 universal 构建，不需要

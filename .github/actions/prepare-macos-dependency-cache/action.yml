@@ -252,12 +252,14 @@ runs:
         # The primary key also prefix-matches partial saves of the same sources.
         # A universal build falls back to a single-slice cache, which still
         # covers half of its Rust work after the universal entry was evicted.
+        # Single-slice builds do not fall back to the other slice, whose
+        # target outputs they cannot use. actions/cache drops the empty lines.
         key: ${{ steps.cargo_build_key.outputs.key }}
         restore-keys: |
           ${{ steps.cargo_build_key.outputs.prefix }}-${{ inputs.cargo-build-architecture }}-
           ${{ steps.cargo_build_key.outputs.prefix }}-universal-
-          ${{ steps.cargo_build_key.outputs.prefix }}-arm64-
-          ${{ steps.cargo_build_key.outputs.prefix }}-x86_64-
+          ${{ inputs.cargo-build-architecture == 'universal' && format('{0}-arm64-', steps.cargo_build_key.outputs.prefix) || '' }}
+          ${{ inputs.cargo-build-architecture == 'universal' && format('{0}-x86_64-', steps.cargo_build_key.outputs.prefix) || '' }}
 
     # save-macos-cargo-build-cache compares fingerprints against this marker so
     # a job that fails before compiling any Rust does not store a duplicate.

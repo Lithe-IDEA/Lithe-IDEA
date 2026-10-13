@@ -35,7 +35,8 @@ Swift tests once and runs the main and database suites selected by the
 classifier, so **macOS CI gate** also owns the Swift database result;
 **Database CI gate** checks the Linux Rust database lane. **macOS Plugin CI**
 stays separate: it only reserves a macOS runner when the classifier selects the
-plugin lane, and otherwise **Plugin CI gate** passes on Linux in seconds. To request a Windows installer for a branch, manually run **Release
+plugin lane, and otherwise **Plugin CI gate** passes on Linux in seconds. To
+request a Windows installer for a branch, manually run **Release
 Windows Preview** and provide that branch as `source_branch`.
 
 ### macOS runner budget

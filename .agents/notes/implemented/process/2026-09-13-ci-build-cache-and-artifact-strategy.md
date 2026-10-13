@@ -74,8 +74,9 @@ macOS runner（GitHub 托管的 Mac 构建机）按组织共享，Free 计划同
   `Plugin`，否则会被 Swift lane 的插件过滤跳过。按上周 18 个 PR 提交回放，
   Rust Core 从 18 次降到 3 次，Windows Rust 与真实 JDT 降到 3 次。
 - 分类脚本读取 `LITHE_CI_DRAFT_PULL_REQUEST`。Draft PR 关闭所有 macOS 和
-  Windows lane，只保留 Linux 上的分类、diff、注释和元数据检查；PR 标记为
-  ready for review 时重新触发完整分类。
+  Windows lane，只保留 Linux 上的分类、diff、Rust 数据库、注释和元数据检查；
+  PR 标记为 ready for review 时，macOS CI、Windows CI 和 macOS Plugin CI 重新
+  触发完整分类。
 
 正确做法：新增 Swift 专项测试时，在共用 **Swift tests** job 里加一个按分类
 结果执行的过滤步骤。不要这样做：新建一个 macOS job 再跑一遍

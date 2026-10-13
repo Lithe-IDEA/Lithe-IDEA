@@ -8,6 +8,9 @@ import LitheModuleAPI
 /// can be disabled but not removed; every other source is third-party.
 struct PluginMarketplaceSource: Equatable, Codable, Sendable, Identifiable {
     static let officialID = "lithe-official"
+    /// Lithe Store, the preset community source. Unlike the official source
+    /// it is third-party and the user may remove it.
+    static let communityID = "lithe-store"
 
     let id: String
     let name: String

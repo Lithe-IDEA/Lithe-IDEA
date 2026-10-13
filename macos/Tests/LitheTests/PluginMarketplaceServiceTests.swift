@@ -224,7 +224,7 @@ struct PluginMarketplaceServiceTests {
             bundledOfficialIndexURL: DeclarativePluginTestSupport.repositoryRoot
                 .appendingPathComponent("Plugins/marketplace/index.json")
         )
-        #expect(service.loadSources().map(\.id) == [PluginMarketplaceSource.officialID])
+        #expect(service.loadSources().map(\.id) == [PluginMarketplaceSource.officialID, PluginMarketplaceSource.communityID])
         // The bundled official index keeps the catalog usable offline.
         #expect(service.cachedIndex(for: MacPluginMarketplaceService.officialSource)?.fetchedAt == nil)
         #expect(service.cachedIndex(for: MacPluginMarketplaceService.officialSource) != nil)
@@ -239,12 +239,49 @@ struct PluginMarketplaceServiceTests {
             repository: "https://github.com/example/plugins",
             isEnabled: true
         )
+        // Saving without Lithe Store records it as removed by the user.
         try service.saveSources([community, official])
 
         let loaded = service.loadSources()
         #expect(loaded.map(\.id) == [PluginMarketplaceSource.officialID, "source-1"])
         #expect(loaded.first?.isEnabled == false)
         #expect(loaded.first?.indexURL == MacPluginMarketplaceService.officialIndexURL)
+    }
+
+    /// Lithe Store is preset as a community source: on by default, its
+    /// enabled state persists, a removal is remembered, and a sources file
+    /// written before the preset existed gains it once.
+    @Test
+    func litheStoreIsAPresetRemovableCommunitySource() throws {
+        let root = PluginMarketplaceTestSupport.temporaryRoot("preset-sources")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = MacPluginMarketplaceService(
+            evaluator: PluginMarketplaceTestSupport.evaluator,
+            packageStore: MacPluginPackageStore(rootURL: root, validator: DeclarativePluginTestSupport.operations),
+            downloader: MacPluginPackageDownloader(transport: PluginMarketplaceTestSupport.LocalFileTransport(files: [:])),
+            transport: PluginMarketplaceTestSupport.LocalFileTransport(files: [:]),
+            applicationSupportDirectory: root,
+            cacheDirectory: root,
+            bundledOfficialIndexURL: nil
+        )
+
+        let store = try #require(service.loadSources().last)
+        #expect(store == MacPluginMarketplaceService.communitySource)
+        #expect(store.kind == .thirdParty)
+        #expect(store.isEnabled)
+        #expect(try service.resolveSource(store.input).indexURL == store.indexURL)
+
+        var disabled = store
+        disabled.isEnabled = false
+        try service.saveSources([MacPluginMarketplaceService.officialSource, disabled])
+        #expect(service.loadSources().last?.isEnabled == false)
+
+        try service.saveSources([MacPluginMarketplaceService.officialSource])
+        #expect(service.loadSources().map(\.id) == [PluginMarketplaceSource.officialID])
+
+        let sourcesURL = root.appendingPathComponent("Lithe/PluginMarketplace/sources.json")
+        try Data(#"{"schemaVersion":1,"sources":[]}"#.utf8).write(to: sourcesURL)
+        #expect(service.loadSources().map(\.id) == [PluginMarketplaceSource.officialID, PluginMarketplaceSource.communityID])
     }
 
     /// The description follows the app's interface language, including a

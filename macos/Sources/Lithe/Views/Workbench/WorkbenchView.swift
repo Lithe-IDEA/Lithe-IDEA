@@ -1101,6 +1101,7 @@ struct WorkbenchView: View {
     private var settingsMenuButton: some View {
         Button { isSettingsMenuPresented.toggle() } label: {
             LitheIDEAIcon(resourcePath: "expui/general/settings@20x20.svg", size: ActivityBarMetrics.iconSize)
+                .foregroundStyle(LitheTheme.toolWindowButtonText)
                 .frame(width: 30, height: 30)
                 .litheRowHover(isActive: isSettingsMenuPresented, cornerRadius: 6,
                                activeBackground: LitheTheme.hoverBackground)

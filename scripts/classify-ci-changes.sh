@@ -82,9 +82,11 @@ while IFS=$'\t' read -r status first_path _; do
     esac
 
     case "$lowercase_path" in
-        *.md|*.mdx)
+        *.md|*.mdx|shared/platform-feature-matrix/*)
             # Text-only documentation still receives git diff validation in the
-            # workflow, but does not reserve a macOS or Windows runner.
+            # workflow, but does not reserve a macOS or Windows runner. The
+            # cross-platform feature matrix is planning data that no product
+            # target reads; Verify Platform Feature Matrix validates its schema.
             ;;
         casks/*|scripts/update-homebrew-cask.rb)
             metadata=true
@@ -322,12 +324,6 @@ while IFS=$'\t' read -r status first_path _; do
             macos_release=true
             windows=true
             windows_rust=true
-            ;;
-        shared/platform-feature-matrix/*)
-            # The cross-platform feature matrix is planning data that no product
-            # target reads; Verify Platform Feature Matrix validates it. Most
-            # feature pull requests update it, so it must not select every
-            # macOS and Windows lane by itself.
             ;;
         shared/*)
             # Non-Markdown shared contracts and fixtures are compatibility

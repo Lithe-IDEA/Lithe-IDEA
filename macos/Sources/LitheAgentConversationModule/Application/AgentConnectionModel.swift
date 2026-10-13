@@ -460,7 +460,9 @@ public final class AgentConnectionModel: ObservableObject {
             // Unattributed calls cannot be assigned to a session without guessing.
             guard let sessionID, conversations[sessionID] != nil,
                   let call = AgentModelCall.parse(event["call"]) else { return }
-            conversations[sessionID]?.recordModelCall(call)
+            // A stream that outlived its turn must not count toward the next one.
+            conversations[sessionID]?.recordModelCall(call,
+                countsForActiveTurn: event["afterTurnFinished"] as? Bool != true)
         case "turnFinished":
             refreshQuota()
             guard let sessionID else { return }

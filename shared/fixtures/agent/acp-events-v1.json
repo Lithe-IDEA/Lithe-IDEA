@@ -147,6 +147,17 @@
         "context": { "systemPromptTokens": 4500, "toolTokens": 3500, "mcpToolTokens": 14000, "messageTokens": 22000, "toolCount": 18, "mcpToolCount": 40, "scaledToUsage": true }
       }
     },
+    "modelCallAfterTurn": {
+      "kind": "modelCall",
+      "sessionId": "session-1",
+      "afterTurnFinished": true,
+      "call": {
+        "api": "anthropicMessages", "model": "claude-sonnet", "status": 200, "streaming": true,
+        "firstTokenMs": 820, "durationMs": 6400,
+        "usage": { "inputTokens": 1200, "cacheReadTokens": 42000, "cacheWriteTokens": 800, "outputTokens": 640 },
+        "context": { "systemPromptTokens": 4500, "toolTokens": 3500, "mcpToolTokens": 14000, "messageTokens": 22000, "toolCount": 18, "mcpToolCount": 40, "scaledToUsage": true }
+      }
+    },
     "modelCallNonStreaming": {
       "kind": "modelCall",
       "sessionId": "session-1",

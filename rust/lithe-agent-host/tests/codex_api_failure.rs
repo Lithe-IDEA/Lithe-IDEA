@@ -291,7 +291,14 @@ fn run_with(
                 assert_eq!(attempts, if recover || cancel { vec![2] } else { vec![] });
                 break;
             }
-            AgentEvent::ModelCall { session_id, call } => model_calls.push((session_id, call)),
+            AgentEvent::ModelCall {
+                session_id,
+                after_turn_finished,
+                call,
+            } => {
+                assert!(!after_turn_finished, "the turn waits for its own calls");
+                model_calls.push((session_id, call));
+            }
             AgentEvent::Stopped { message } => panic!("Codex stopped unexpectedly: {message:?}"),
             _ => {}
         }

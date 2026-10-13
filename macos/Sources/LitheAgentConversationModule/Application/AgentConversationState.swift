@@ -151,9 +151,9 @@ public struct AgentConversation: Equatable, Sendable {
         if turn != activeTurn { activeTurn = turn }
     }
 
-    mutating func recordModelCall(_ call: AgentModelCall) {
+    mutating func recordModelCall(_ call: AgentModelCall, countsForActiveTurn: Bool = true) {
         modelCalls.record(call)
-        activeTurn?.recordModelCall(call)
+        if countsForActiveTurn { activeTurn?.recordModelCall(call) }
     }
 
     mutating func enqueuePermission(_ prompt: AgentPermissionPrompt) {

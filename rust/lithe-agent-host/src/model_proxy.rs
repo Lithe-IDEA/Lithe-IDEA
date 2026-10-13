@@ -49,11 +49,19 @@ const HOP_HEADERS: [&str; 10] = [
     "host",
 ];
 
-/// Called once per completed or abandoned generation request, with the
-/// session that had the only running prompt when the request started.
-pub(crate) type CallSink = Arc<dyn Fn(Option<String>, ModelCall) + Send + Sync>;
-/// Resolves the session a new request belongs to, or `None` when ambiguous.
-pub(crate) type SessionResolver = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+/// The prompt that caused a request: its session and the Host's turn generation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CallOwner {
+    pub(crate) session: String,
+    pub(crate) generation: u64,
+}
+
+/// Called once per completed or abandoned generation request with the
+/// session that had the only running prompt when the request started, and
+/// whether that prompt's `turnFinished` was already emitted.
+pub(crate) type CallSink = Arc<dyn Fn(Option<String>, bool, ModelCall) + Send + Sync>;
+/// Resolves the prompt a new request belongs to, or `None` when ambiguous.
+pub(crate) type SessionResolver = Arc<dyn Fn() -> Option<CallOwner> + Send + Sync>;
 
 /// Attributed generation requests that have started but not yet been reported.
 /// The Host waits on it so a turn's `modelCall` events precede `turnFinished`.
@@ -61,9 +69,28 @@ pub(crate) type SessionResolver = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 pub(crate) struct CallsInFlight {
     counts: Mutex<HashMap<String, usize>>,
     changed: tokio::sync::Notify,
+    /// Latest generation per session whose `turnFinished` has been emitted.
+    finished: Mutex<HashMap<String, u64>>,
 }
 
 impl CallsInFlight {
+    /// Record that `generation`'s turn ended. Later reports for it, from a
+    /// stream that outlived the settle bound, must not count toward the next turn.
+    pub(crate) fn finish_turn(&self, session: &str, generation: u64) {
+        if let Ok(mut finished) = self.finished.lock() {
+            let latest = finished.entry(session.to_owned()).or_default();
+            *latest = (*latest).max(generation);
+        }
+    }
+
+    fn after_turn(&self, owner: &CallOwner) -> bool {
+        self.finished.lock().is_ok_and(|finished| {
+            finished
+                .get(&owner.session)
+                .is_some_and(|latest| *latest >= owner.generation)
+        })
+    }
+
     fn begin(&self, session: &str) {
         if let Ok(mut counts) = self.counts.lock() {
             *counts.entry(session.to_owned()).or_default() += 1;
@@ -146,25 +173,33 @@ struct State {
 }
 
 impl State {
-    fn report(&self, session: Option<String>, call: ModelCall) {
-        let finished = session.clone();
-        (self.sink)(session, call);
-        if let Some(session) = finished {
-            self.in_flight.end(&session);
+    fn report(&self, owner: Option<CallOwner>, call: ModelCall) {
+        let after_turn = owner
+            .as_ref()
+            .is_some_and(|owner| self.in_flight.after_turn(owner));
+        (self.sink)(
+            owner.as_ref().map(|owner| owner.session.clone()),
+            after_turn,
+            call,
+        );
+        self.release(owner.as_ref());
+    }
+
+    /// End an attributed request without reporting it, e.g. a redirect hop.
+    fn release(&self, owner: Option<&CallOwner>) {
+        if let Some(owner) = owner {
+            self.in_flight.end(&owner.session);
         }
     }
 
     /// Map a same-origin redirect target back onto this proxy. The Agent
-    /// resolves `Location` against the proxy URL, so an absolute path from the
-    /// provider would otherwise lose the token prefix. Relative references
-    /// without a leading `/` already resolve correctly because proxy paths
-    /// mirror upstream paths. Cross-origin targets are left for the Agent's
-    /// own client and credential policy, exactly as without the proxy.
-    fn rewrite_location(&self, location: &str) -> Option<String> {
-        if !(location.starts_with('/') || location.contains("://")) {
-            return None;
-        }
-        let target = self.origin.join(location).ok()?;
+    /// resolves `Location` against the proxy URL, whose path differs from the
+    /// upstream request by the token prefix, so absolute paths and `../`
+    /// references would escape the proxy route. Resolve against the actual
+    /// upstream request URL, then remap. Cross-origin targets are left for
+    /// the Agent's own client and credential policy, exactly as without the proxy.
+    fn rewrite_location(&self, location: &str, request: &url::Url) -> Option<String> {
+        let target = request.join(location).ok()?;
         if target.origin() != self.origin.origin() {
             return None;
         }
@@ -324,9 +359,10 @@ async fn handle(
         }
     };
     let session = api.and_then(|_| (state.session)());
-    if let Some(session) = &session {
-        state.in_flight.begin(session);
+    if let Some(owner) = &session {
+        state.in_flight.begin(&owner.session);
     }
+    let request_url = url::Url::parse(&url).ok();
     let started = Instant::now();
     let upstream = state
         .client
@@ -351,6 +387,14 @@ async fn handle(
         }
     };
     let status = upstream.status();
+    // A redirect is a transport hop, not a generation; only the final
+    // response of the followed request is a model call.
+    let api = if status.is_redirection() {
+        state.release(session.as_ref());
+        None
+    } else {
+        api
+    };
     let mut response = Response::builder().status(status);
     let streaming = upstream
         .headers()
@@ -364,10 +408,9 @@ async fn handle(
             }
             let rewritten = (name == hyper::header::LOCATION)
                 .then(|| {
-                    value
-                        .to_str()
-                        .ok()
-                        .and_then(|location| state.rewrite_location(location))
+                    value.to_str().ok().and_then(|location| {
+                        state.rewrite_location(location, request_url.as_ref()?)
+                    })
                 })
                 .flatten()
                 .and_then(|location| HeaderValue::from_str(&location).ok());
@@ -449,7 +492,7 @@ struct ObservedStream {
     inner: futures::stream::BoxStream<'static, reqwest::Result<Bytes>>,
     observer: Option<ResponseObserver>,
     shape: Option<RequestShape>,
-    session: Option<String>,
+    session: Option<CallOwner>,
     state: Arc<State>,
 }
 
@@ -546,6 +589,13 @@ mod tests {
         (response.status().as_u16(), response.text().await.unwrap())
     }
 
+    fn owner() -> Option<CallOwner> {
+        Some(CallOwner {
+            session: "session-1".into(),
+            generation: 1,
+        })
+    }
+
     /// Calls reported by the proxy, in completion order.
     type Collected = Arc<Mutex<Vec<(Option<String>, ModelCall)>>>;
 
@@ -553,7 +603,7 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let sink = calls.clone();
         (
-            Arc::new(move |session, call| sink.lock().unwrap().push((session, call))),
+            Arc::new(move |session, _, call| sink.lock().unwrap().push((session, call))),
             calls,
         )
     }
@@ -568,14 +618,9 @@ mod tests {
         let (base, request) = upstream(reply).await;
         let (sink, calls) = collecting();
         let in_flight = Arc::new(CallsInFlight::default());
-        let proxy = start(
-            &base,
-            Arc::new(|| Some("session-1".into())),
-            sink,
-            in_flight.clone(),
-        )
-        .await
-        .unwrap();
+        let proxy = start(&base, Arc::new(owner), sink, in_flight.clone())
+            .await
+            .unwrap();
         let (status, body) = send(
             proxy.base_url(),
             "/v1/messages",
@@ -728,7 +773,9 @@ mod tests {
             sink: collecting().0,
             in_flight: Arc::default(),
         };
-        let rewrite = |location: &str| state.rewrite_location(location);
+        // Locations resolve against the actual upstream request, not the proxy URL.
+        let request = url::Url::parse(&format!("{origin}/api/v1/messages")).unwrap();
+        let rewrite = |location: &str| state.rewrite_location(location, &request);
         assert_eq!(
             rewrite("/api/v1/messages?beta=1").unwrap(),
             format!("{prefix}/messages?beta=1")
@@ -746,9 +793,22 @@ mod tests {
             rewrite("/api/v10/x").unwrap(),
             format!("{prefix}/~origin/api/v10/x")
         );
-        // Cross-origin targets and relative references are not rewritten.
+        // Relative references, including `../` that leave the configured path.
+        assert_eq!(rewrite("responses").unwrap(), format!("{prefix}/responses"));
+        assert_eq!(
+            rewrite("../v2/messages?x=1").unwrap(),
+            format!("{prefix}/~origin/api/v2/messages?x=1")
+        );
+        assert_eq!(
+            rewrite("../../v2/messages").unwrap(),
+            format!("{prefix}/~origin/v2/messages")
+        );
+        assert_eq!(
+            rewrite("./v1/../responses").unwrap(),
+            format!("{prefix}/responses")
+        );
+        // Cross-origin targets are left to the Agent's own client.
         assert_eq!(rewrite("https://other.example/v1/messages"), None);
-        assert_eq!(rewrite("messages"), None);
     }
 
     #[tokio::test]
@@ -760,7 +820,8 @@ mod tests {
         ])
         .await;
         let (sink, calls) = collecting();
-        let proxy = start(&base, Arc::new(|| None), sink, Arc::default())
+        let in_flight = Arc::new(CallsInFlight::default());
+        let proxy = start(&base, Arc::new(owner), sink, in_flight.clone())
             .await
             .unwrap();
         // reqwest follows a 307 like the Agents' HTTP clients, resending the body.
@@ -774,13 +835,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["/api/v1/messages", "/v2/messages"]
         );
+        // The released redirect hop does not leave the turn waiting.
+        assert!(!in_flight.pending("session-1"));
         drop(proxy);
-        // Both hops are generation requests; the redirected one carries usage.
-        assert!(calls
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|(_, call)| call.usage.is_some()));
+        // The 307 hop is transport, not a generation: exactly one model call.
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert!(calls[0].1.streaming && calls[0].1.usage.is_some());
     }
 
     #[tokio::test]
@@ -834,5 +895,18 @@ mod tests {
         let bounded = tokio::time::Instant::now();
         in_flight.settle("session-2", Duration::from_secs(2)).await;
         assert_eq!(bounded.elapsed(), Duration::from_secs(2));
+        // After the turn ends its late call is marked; the next turn's is not.
+        let late = CallOwner {
+            session: "session-2".into(),
+            generation: 4,
+        };
+        let next = CallOwner {
+            session: "session-2".into(),
+            generation: 7,
+        };
+        assert!(!in_flight.after_turn(&late));
+        in_flight.finish_turn("session-2", 4);
+        assert!(in_flight.after_turn(&late));
+        assert!(!in_flight.after_turn(&next));
     }
 }

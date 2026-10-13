@@ -1605,6 +1605,23 @@ struct AgentConversationFeatureModelTests {
     }
 
     @Test
+    func lateCallsFromAFinishedTurnCountForTheSessionOnly() async throws {
+        try await withStatisticsFeature { feature, connection, _ in
+            try feature.send("First")
+            try feature.receive(event("sessionCreated", ["token": connection.commands.last?["token"] as Any]))
+            try feature.receive(event("turnFinished"))
+            // The next turn starts before the previous turn's stream reports.
+            try feature.send("Second")
+            try feature.receive(event("modelCallAfterTurn"))
+            #expect(feature.selectedConversation?.activeTurn?.modelCalls.callCount == 0)
+            #expect(feature.selectedConversation?.modelCalls.callCount == 1)
+            try feature.receive(event("modelCall"))
+            #expect(feature.selectedConversation?.activeTurn?.modelCalls.callCount == 1)
+            #expect(feature.selectedConversation?.modelCalls.callCount == 2)
+        }
+    }
+
+    @Test
     func callsWithoutUsageMakeTokenTotalsAnExplicitLowerBound() throws {
         var conversation = AgentConversation()
         conversation.recordModelCall(try modelCall(usage: ["inputTokens": 100, "cacheReadTokens": 900,

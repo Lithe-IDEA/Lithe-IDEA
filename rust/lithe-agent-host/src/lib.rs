@@ -467,6 +467,10 @@ pub enum AgentEvent {
     ModelCall {
         #[serde(skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
+        /// The causing turn already finished: the stream outlived the settle
+        /// bound. Consumers count it for the session only, never a later turn.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        after_turn_finished: bool,
         call: model_calls::ModelCall,
     },
     /// The agent acknowledged the prompt's completion, including cancellation.
@@ -743,7 +747,13 @@ async fn run_agent(
                 Arc::new(move || sole_running_session(&running));
             let calls = emit.clone();
             let sink: model_proxy::CallSink =
-                Arc::new(move |session_id, call| calls(AgentEvent::ModelCall { session_id, call }));
+                Arc::new(move |session_id, after_turn_finished, call| {
+                    calls(AgentEvent::ModelCall {
+                        session_id,
+                        after_turn_finished,
+                        call,
+                    })
+                });
             // Statistics are optional. A proxy that cannot start leaves the
             // configured endpoint in place rather than blocking the Agent.
             match model_proxy::start(&route.base_url, session, sink, calls_in_flight.clone()).await
@@ -865,11 +875,14 @@ async fn run_agent(
 
 /// Provider requests carry no ACP session id. Attribute a model call only
 /// when exactly one non-cancelling prompt can have caused it.
-fn sole_running_session(turns: &RunningTurns) -> Option<String> {
+fn sole_running_session(turns: &RunningTurns) -> Option<model_proxy::CallOwner> {
     let turns = turns.lock().ok()?;
     let mut active = turns.iter().filter(|(_, turn)| !turn.cancelling);
     match (active.next(), active.next()) {
-        (Some((session_id, _)), None) => Some(session_id.clone()),
+        (Some((session_id, turn)), None) => Some(model_proxy::CallOwner {
+            session: session_id.clone(),
+            generation: turn.generation,
+        }),
         _ => None,
     }
 }
@@ -1348,6 +1361,7 @@ where
                                                 &prompt_permissions,
                                                 Some(&session_id),
                                             );
+                                            calls_in_flight.finish_turn(&session_id, generation);
                                             emit(failed(
                                                 None,
                                                 Some(session_id),
@@ -1359,6 +1373,7 @@ where
                                         // Keep the turn registered so the outer loop stops the
                                         // connection instead of allowing a stale request to
                                         // overlap.
+                                        calls_in_flight.finish_turn(&session_id, generation);
                                         emit(failed(
                                             None,
                                             Some(session_id.clone()),
@@ -1386,6 +1401,7 @@ where
                             // The proxy reports a call when its response stream
                             // ends, which can trail the prompt response.
                             calls_in_flight.settle(&session_id, MODEL_CALL_SETTLE_TIMEOUT).await;
+                            calls_in_flight.finish_turn(&session_id, generation);
                             emit(match result {
                                 Ok(Ok(response)) => prompt::finished(session_id, response),
                                 Ok(Err(error)) => failed(None, Some(session_id), prompt_retry::error_message(&error)),

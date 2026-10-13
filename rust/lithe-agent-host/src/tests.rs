@@ -2842,10 +2842,15 @@ fn model_calls_are_attributed_only_to_a_sole_running_prompt() {
         .lock()
         .unwrap()
         .insert("session-1".into(), turn(false));
-    assert_eq!(sole_running_session(&turns).as_deref(), Some("session-1"));
+    // The owner carries the turn generation so late calls can be told apart.
+    let owner = model_proxy::CallOwner {
+        session: "session-1".into(),
+        generation: 1,
+    };
+    assert_eq!(sole_running_session(&turns), Some(owner.clone()));
     // A cancelling turn can still issue requests, but they are not attributed.
     turns.lock().unwrap().insert("session-2".into(), turn(true));
-    assert_eq!(sole_running_session(&turns).as_deref(), Some("session-1"));
+    assert_eq!(sole_running_session(&turns), Some(owner));
     // Concurrent prompts make a provider request ambiguous.
     turns
         .lock()
@@ -2883,7 +2888,17 @@ fn model_call_events_use_the_fixture_shape() {
     };
     let event = AgentEvent::ModelCall {
         session_id: Some("session-1".into()),
-        call,
+        after_turn_finished: false,
+        call: call.clone(),
     };
     assert_eq!(serde_json::to_value(event).unwrap(), expected);
+    let late = AgentEvent::ModelCall {
+        session_id: Some("session-1".into()),
+        after_turn_finished: true,
+        call,
+    };
+    assert_eq!(
+        serde_json::to_value(late).unwrap(),
+        fixture()["events"]["modelCallAfterTurn"]
+    );
 }

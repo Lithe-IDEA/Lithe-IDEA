@@ -373,8 +373,12 @@ fn run_local_api_turn_with(status: u16, observe_model_calls: bool) {
             }
             AgentEvent::ModelCall {
                 session_id: id,
+                after_turn_finished,
                 call,
-            } => model_calls.push((id, call)),
+            } => {
+                assert!(!after_turn_finished, "the turn waits for its own calls");
+                model_calls.push((id, call));
+            }
             AgentEvent::Stopped { message } => {
                 panic!("agent stopped before API failure: {message:?}")
             }

@@ -327,7 +327,9 @@ optional `firstTokenMs`, `durationMs`, optional provider `usage`
 exactly one non-cancelling prompt was running when the request started; consumers
 drop unattributed calls instead of guessing. The host waits up to two seconds for
 a turn's attributed calls to report before emitting its `turnFinished`, so they
-arrive first; a call still open after that bound counts for the session only.
+arrive first. A call still open after that bound carries `afterTurnFinished: true`
+and counts for the session only, never for a later turn. Redirect (3xx) hops are
+forwarded but are not model calls; only the followed request is reported.
 Calls without `usage` make session token sums a lower bound, which consumers
 must label as such. Unparsable provider data omits the
 optional fields and never affects forwarding. Without these events, consumers do

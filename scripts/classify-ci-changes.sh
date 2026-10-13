@@ -323,6 +323,12 @@ while IFS=$'\t' read -r status first_path _; do
             windows=true
             windows_rust=true
             ;;
+        shared/platform-feature-matrix/*)
+            # The cross-platform feature matrix is planning data that no product
+            # target reads; Verify Platform Feature Matrix validates it. Most
+            # feature pull requests update it, so it must not select every
+            # macOS and Windows lane by itself.
+            ;;
         shared/*)
             # Non-Markdown shared contracts and fixtures are compatibility
             # surfaces consumed by Swift, Rust Core, and the Windows product.

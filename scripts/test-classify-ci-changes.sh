@@ -144,6 +144,14 @@ modify_database_swift() { printf '%s\n' 'struct UpdatedDatabaseModule {}' > maco
 modify_database_swift_test() { printf '%s\n' 'struct UpdatedDatabaseTests {}' > macos/Tests/LitheDatabaseModuleTests/DatabaseTests.swift; }
 modify_database_app_source() { printf '%s\n' 'struct UpdatedDatabaseView {}' > macos/Sources/Lithe/Views/Database/DatabaseView.swift; }
 modify_mixed_core_logic_test() { printf '%s\n' 'struct UpdatedLitheCoreLogicTests {}' > macos/Tests/LitheTests/LitheCoreLogicTests.swift; }
+modify_feature_matrix() {
+    mkdir -p shared/platform-feature-matrix/features
+    printf '%s\n' '{"id":"updated"}' > shared/platform-feature-matrix/features/example.json
+}
+modify_feature_matrix_and_swift() {
+    modify_feature_matrix
+    modify_swift_source
+}
 modify_shared_fixture() { printf '%s\n' '{"operation":"updated"}' > shared/fixtures/core/test.json; }
 modify_windows_frontend() { printf '%s\n' 'export const value = 2;' > windows/tauri/src/value.ts; }
 modify_windows_rust() { printf '%s\n' 'fn main() { println!("updated"); }' > windows/tauri/src-tauri/src/main.rs; }
@@ -256,6 +264,12 @@ assert_classification swift-and-database \
 assert_classification shared-fixture \
     "$(classification true false false true false false true true false false)" \
     modify_shared_fixture
+assert_classification feature-matrix \
+    "$(classification false false false false false false false false false false)" \
+    modify_feature_matrix
+assert_classification feature-matrix-with-swift \
+    "$(classification true false false false false false false false false false)" \
+    modify_feature_matrix_and_swift
 assert_classification windows-frontend \
     "$(classification false false false false false false true false false false)" \
     modify_windows_frontend

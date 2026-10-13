@@ -59,6 +59,10 @@ macOS runner（GitHub 托管的 Mac 构建机）按组织共享，Free 计划同
 - 插件测试保留在独立的 macOS Plugin CI，只有分类器选中插件 lane 时才申请
   macOS runner。多数 PR 不改插件，独立 job 时整条 lane 直接跳过；合进共用
   job 则需要为少数插件 PR 额外拉长主 Swift job，收益更小。
+- `shared/platform-feature-matrix/` 是规划数据，产品代码不读取，由 Verify
+  Platform Feature Matrix 工作流单独校验。几乎每个功能 PR 都要更新它；过去它
+  落入 `shared/*` 规则，只改 macOS 界面的 PR 也会触发 Windows CI 和 macOS 上
+  17 分钟的 Rust Core 测试。现在矩阵文件不选择任何 runner lane。
 - 分类脚本读取 `LITHE_CI_DRAFT_PULL_REQUEST`。Draft PR 关闭所有 macOS 和
   Windows lane，只保留 Linux 上的分类、diff、注释和元数据检查；PR 标记为
   ready for review 时重新触发完整分类。

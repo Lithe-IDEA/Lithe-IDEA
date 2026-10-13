@@ -563,8 +563,10 @@ GitFeatureModel 写入及确认流程；只读历史/保存记录模式不提供
 不能只比较 macOS 共用的 field editor（窗口内多个输入框共用的文本编辑器）；
 鼠标回调、焦点变化和卸载共用事件版本；延迟点击只有版本仍最新、窗口未变且
 当前 focus owner 未变时才能发布点击状态，否则按当前 responder 重算。
-卸载时清除活动状态并移除观察器；重新挂载立即同步当前可见焦点区域，并在布局
-完成后重新核对。旧挂载或较早点击的回调不能覆盖新焦点。
+卸载时立即移除观察器并使旧版本失效；清除活动状态和重新挂载同步当前可见焦点
+区域均在下一次主队列回调发布。挂载、卸载及窗口通知不得同步写 SwiftUI Binding，
+否则真实 NSHostingView 销毁期间会与 GraphHost.invalidate 发生独占访问冲突并
+触发 SIGABRT。旧挂载或较早点击的回调不能覆盖新焦点。
 
 项目树是已有键盘路由的特殊消费者：`ProjectTreeKeyboardCommands` 发布
 键盘归属变化，颜色与实际消费方向键的区域一致。通过窗口 didUpdate 及时识别
@@ -606,6 +608,9 @@ LitheTheme.selection : .clear)`；这种写法无法在窗口失焦时切换灰�
 较早鼠标写入不能覆盖新 responder（包括窗口通知尚未发布）或新挂载；
 `treeYieldsToSearchBeforeTypingButRetainsAsynchronousEditorFocus` 验证搜索框
 尚未输入即失焦，以及真实 WKWebView 异步聚焦仍保留项目树键盘归属。
+`trackerUnmountDefersBindingWritesUntilTheLifecycleCallbackReturns` 检查生命周期内
+没有同步 Binding 写入，`activityTrackerCanDestroyItsSwiftUIStateOwner` 覆盖真实
+SwiftUI State 宿主销毁和主队列清理，不能只靠手写 Binding 的组件测试推断安全。
 完整应用验收与组件回归分别记录，
 不由编译或单一页面截图推断整个产品已验证。
 

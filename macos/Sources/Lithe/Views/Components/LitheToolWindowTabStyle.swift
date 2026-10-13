@@ -76,7 +76,7 @@ struct LitheToolWindowActivityTracker: NSViewRepresentable {
     }
 
     func updateNSView(_ view: NSView, context: Context) {
-        context.coordinator.isActive = isActive
+        context.coordinator.updateBinding($isActive)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(isActive: $isActive) }
@@ -97,6 +97,8 @@ struct LitheToolWindowActivityTracker: NSViewRepresentable {
         private weak var lastResponder: NSResponder?
         private var eventVersion = 0
         private let schedule: (@escaping () -> Void) -> Void
+
+        func updateBinding(_ binding: Binding<Bool>) { _isActive = binding }
 
         func queuePointerActivity(_ clickedInside: Bool) {
             guard let window = view?.window else { return }
@@ -129,26 +131,37 @@ struct LitheToolWindowActivityTracker: NSViewRepresentable {
             if let focusObserver { NotificationCenter.default.removeObserver(focusObserver) }
             focusObserver = nil; lastResponder = nil
             eventVersion += 1
-            isActive = false
+            let version = eventVersion
+            // SwiftUI may be destroying its graph here; publish only after that transaction ends.
+            schedule { [self] in
+                guard eventVersion == version else { return }
+                if isActive { isActive = false }
+            }
         }
 
-        func observeFocus() {
-            stopObservingFocus()
-            guard let window = view?.window else { return }
-            synchronizeFocus()
-            // Recheck after SwiftUI assigns the tracking view's layout, unless newer input has arrived.
+        private func queueFocusSynchronization() {
+            eventVersion += 1
             let version = eventVersion
             schedule { [weak self] in
                 guard let self, self.eventVersion == version else { return }
                 self.synchronizeFocus()
             }
+        }
+
+        func observeFocus() {
+            stopObservingFocus()
+            guard let window = view?.window else { return }
+            lastResponder = Self.focusOwner(window.firstResponder)
+            // Mount callbacks can also run during a SwiftUI graph update; read the final layout next turn.
+            queueFocusSynchronization()
             focusObserver = NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification,
                 object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self, let view = self.view, let window = view.window else { return }
                     let owner = Self.focusOwner(window.firstResponder)
                     guard self.lastResponder !== owner else { return }
-                    self.synchronizeFocus()
+                    self.lastResponder = owner
+                    self.queueFocusSynchronization()
                 }
             }
         }

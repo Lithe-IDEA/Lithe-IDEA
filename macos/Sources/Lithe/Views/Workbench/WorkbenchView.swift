@@ -774,7 +774,6 @@ struct WorkbenchView: View {
             settingsMenuButton
         }
         .padding(.leading, WorkbenchTopBarMetrics.leadingInset)
-        .padding(.trailing, 10)
         .frame(height: LitheTheme.Metrics.toolbarHeight)
         .background {
             frameChromeBackground
@@ -1107,7 +1106,7 @@ struct WorkbenchView: View {
                                activeBackground: LitheTheme.hoverBackground)
         }
         .buttonStyle(.litheNoPress)
-        .frame(width: ActivityBarMetrics.width, height: LitheTheme.Metrics.toolbarHeight)
+        .frame(width: ActivityBarMetrics.rightWidth, height: LitheTheme.Metrics.toolbarHeight)
         .workbenchHoverHelp(Text(LocalizedStringKey("Settings")), placement: .below)
         .accessibilityLabel(Text(LocalizedStringKey("Settings")))
         .accessibilityIdentifier("workbench-settings-menu")
@@ -1176,15 +1175,6 @@ struct WorkbenchView: View {
                 WorkbenchNotificationCenterView()
                     .environmentObject(model)
             }
-
-            activityToolButton(
-                ideaAssetPath: "expui/nodes/plugin.svg",
-                help: "Plugins",
-                tooltipPlacement: .leading,
-                isSelected: model.workbenchFeature.isSettingsPresented
-                    && model.requestedSettingsCategory == .plugins,
-                action: { model.showSettings(category: .plugins) }
-            )
 
             dockStripe(DockPosition(anchor: .right, group: .primary))
             Spacer(minLength: 0)

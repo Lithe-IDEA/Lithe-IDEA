@@ -3,12 +3,15 @@
 //! The Agent receives `http://127.0.0.1:<port>/<launch token>` instead of the
 //! configured endpoint. Every request is forwarded to that endpoint with the
 //! Agent's own headers and body; responses stream back byte for byte. Only
-//! generation requests are observed through [`crate::model_calls`]. The proxy
-//! never stores, logs or emits request content or credentials, binds only the
-//! loopback interface and rejects paths without the per-launch token. Its
-//! lifetime is one Agent connection; it writes no files.
+//! generation requests are observed through [`crate::model_calls`]; every other
+//! request streams through without buffering. Same-origin redirects are mapped
+//! back onto the proxy so they keep working. The proxy never stores, logs or
+//! emits request content or credentials, binds only the loopback interface and
+//! rejects paths without the per-launch token. Its lifetime is one Agent
+//! connection; it writes no files.
 //! Decision: .agents/notes/implemented/architecture/2026-10-13-agent-model-call-observation.md
 
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -17,16 +20,18 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
-use http_body_util::{combinators::UnsyncBoxBody, BodyExt, Full, Limited, StreamBody};
+use http_body_util::{combinators::UnsyncBoxBody, BodyExt, Full, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::header::{HeaderMap, HeaderName, HeaderValue};
 use hyper::{Request, Response, StatusCode};
 
 use crate::model_calls::{self, ModelApi, ModelCall, RequestShape, ResponseObserver};
 
-/// Request bodies are buffered to measure their composition. Agents send
-/// conversation history, images and tool definitions, which stay far below this.
-const MAX_REQUEST_BYTES: usize = 256 * 1024 * 1024;
+/// Generation request bodies up to this size are buffered to measure their
+/// composition. Larger bodies are still forwarded, just without composition.
+const OBSERVED_REQUEST_BYTES: usize = 32 * 1024 * 1024;
+/// Route segment for same-origin redirect targets outside the configured path.
+const ORIGIN_ROUTE: &str = "/~origin";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Headers that describe one hop and must not be forwarded (RFC 9110 §7.6.1),
@@ -49,6 +54,57 @@ const HOP_HEADERS: [&str; 10] = [
 pub(crate) type CallSink = Arc<dyn Fn(Option<String>, ModelCall) + Send + Sync>;
 /// Resolves the session a new request belongs to, or `None` when ambiguous.
 pub(crate) type SessionResolver = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+
+/// Attributed generation requests that have started but not yet been reported.
+/// The Host waits on it so a turn's `modelCall` events precede `turnFinished`.
+#[derive(Default)]
+pub(crate) struct CallsInFlight {
+    counts: Mutex<HashMap<String, usize>>,
+    changed: tokio::sync::Notify,
+}
+
+impl CallsInFlight {
+    fn begin(&self, session: &str) {
+        if let Ok(mut counts) = self.counts.lock() {
+            *counts.entry(session.to_owned()).or_default() += 1;
+        }
+    }
+
+    fn end(&self, session: &str) {
+        if let Ok(mut counts) = self.counts.lock() {
+            if let Some(count) = counts.get_mut(session) {
+                *count -= 1;
+                if *count == 0 {
+                    counts.remove(session);
+                }
+            }
+        }
+        self.changed.notify_waiters();
+    }
+
+    fn pending(&self, session: &str) -> bool {
+        self.counts
+            .lock()
+            .is_ok_and(|counts| counts.contains_key(session))
+    }
+
+    /// Wait until `session` has no unreported call, at most `limit`. A stream
+    /// the Agent keeps open past its prompt response cannot delay the turn
+    /// beyond this bound; its call is then reported for the session only.
+    pub(crate) async fn settle(&self, session: &str, limit: Duration) {
+        let _ = tokio::time::timeout(limit, async {
+            loop {
+                // Registered before the check so a concurrent `end` is not missed.
+                let changed = self.changed.notified();
+                if !self.pending(session) {
+                    return;
+                }
+                changed.await;
+            }
+        })
+        .await;
+    }
+}
 
 /// A running proxy. Dropping it stops accepting connections and aborts
 /// in-flight exchanges together with the Agent connection that used them.
@@ -79,9 +135,57 @@ struct State {
     prefix: String,
     /// Configured endpoint without a trailing slash.
     upstream: String,
+    /// Scheme, host and port of the configured endpoint.
+    origin: url::Url,
+    /// Path of the configured endpoint without a trailing slash, e.g. `/api`.
+    base_path: String,
     client: reqwest::Client,
     session: SessionResolver,
     sink: CallSink,
+    in_flight: Arc<CallsInFlight>,
+}
+
+impl State {
+    fn report(&self, session: Option<String>, call: ModelCall) {
+        let finished = session.clone();
+        (self.sink)(session, call);
+        if let Some(session) = finished {
+            self.in_flight.end(&session);
+        }
+    }
+
+    /// Map a same-origin redirect target back onto this proxy. The Agent
+    /// resolves `Location` against the proxy URL, so an absolute path from the
+    /// provider would otherwise lose the token prefix. Relative references
+    /// without a leading `/` already resolve correctly because proxy paths
+    /// mirror upstream paths. Cross-origin targets are left for the Agent's
+    /// own client and credential policy, exactly as without the proxy.
+    fn rewrite_location(&self, location: &str) -> Option<String> {
+        if !(location.starts_with('/') || location.contains("://")) {
+            return None;
+        }
+        let target = self.origin.join(location).ok()?;
+        if target.origin() != self.origin.origin() {
+            return None;
+        }
+        let mut rest = target.path().to_owned();
+        if let Some(query) = target.query() {
+            rest.push('?');
+            rest.push_str(query);
+        }
+        if let Some(fragment) = target.fragment() {
+            rest.push('#');
+            rest.push_str(fragment);
+        }
+        let under_base = self.base_path.is_empty()
+            || target.path() == self.base_path
+            || target.path().starts_with(&format!("{}/", self.base_path));
+        Some(if under_base {
+            format!("{}{}", self.prefix, &rest[self.base_path.len()..])
+        } else {
+            format!("{}{ORIGIN_ROUTE}{rest}", self.prefix)
+        })
+    }
 }
 
 /// Bind an ephemeral loopback port and forward to `upstream`.
@@ -89,7 +193,14 @@ pub(crate) async fn start(
     upstream: &str,
     session: SessionResolver,
     sink: CallSink,
+    in_flight: Arc<CallsInFlight>,
 ) -> Result<ModelCallProxy, String> {
+    let upstream = upstream.trim_end_matches('/');
+    let mut origin = url::Url::parse(upstream)
+        .map_err(|error| format!("Could not prepare model call statistics: {error}"))?;
+    let base_path = origin.path().trim_end_matches('/').to_owned();
+    origin.set_path("/");
+    origin.set_query(None);
     let client = reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         // Redirects and compression are the Agent's concern; forward them as-is.
@@ -106,10 +217,13 @@ pub(crate) async fn start(
     let prefix = format!("/lithe-{}", uuid::Uuid::new_v4().simple());
     let state = Arc::new(State {
         prefix: prefix.clone(),
-        upstream: upstream.trim_end_matches('/').to_owned(),
+        upstream: upstream.to_owned(),
+        origin,
+        base_path,
         client,
         session,
         sink,
+        in_flight,
     });
     let connections = Arc::new(Mutex::new(tokio::task::JoinSet::new()));
     let accepted = connections.clone();
@@ -156,35 +270,67 @@ async fn handle(
     else {
         return Ok(failure(StatusCode::NOT_FOUND, "Unknown model call route"));
     };
-    let url = format!("{}{rest}", state.upstream);
+    // Same-origin redirects outside the configured path use the origin route.
+    let (url, route) = match rest.strip_prefix(ORIGIN_ROUTE) {
+        Some(path) if path.is_empty() || path.starts_with(['/', '?']) => (
+            format!("{}{path}", state.origin.as_str().trim_end_matches('/')),
+            path,
+        ),
+        _ => (format!("{}{rest}", state.upstream), rest),
+    };
     let api = (request.method() == hyper::Method::POST)
-        .then(|| ModelApi::from_path(rest))
+        .then(|| ModelApi::from_path(route))
         .flatten();
-    let method = request.method().clone();
     let compressed_request = request
         .headers()
         .contains_key(hyper::header::CONTENT_ENCODING);
     let headers = forwarded_headers(request.headers(), api.is_some());
-    let body = match Limited::new(request.into_body(), MAX_REQUEST_BYTES)
-        .collect()
-        .await
-    {
-        Ok(body) => body.to_bytes(),
-        Err(_) => {
-            return Ok(failure(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "The model request is too large to forward",
-            ))
+    let (parts, body) = request.into_parts();
+    let mut body = body.into_data_stream();
+    let mut shape = None;
+    let body = match api {
+        // Auxiliary and upload requests stream through without buffering.
+        None => reqwest::Body::wrap_stream(body),
+        Some(api) => {
+            let mut buffered = Vec::new();
+            let mut size = 0;
+            let mut complete = true;
+            while let Some(chunk) = body.next().await {
+                let Ok(chunk) = chunk else {
+                    return Ok(failure(
+                        StatusCode::BAD_REQUEST,
+                        "The model request was interrupted",
+                    ));
+                };
+                size += chunk.len();
+                buffered.push(chunk);
+                if size > OBSERVED_REQUEST_BYTES {
+                    complete = false;
+                    break;
+                }
+            }
+            if complete {
+                let bytes = Bytes::from(buffered.concat());
+                if !compressed_request {
+                    shape = model_calls::request_shape(api, &bytes);
+                }
+                reqwest::Body::from(bytes)
+            } else {
+                // Over the observation budget: forward unchanged without composition.
+                reqwest::Body::wrap_stream(
+                    futures::stream::iter(buffered.into_iter().map(Ok)).chain(body),
+                )
+            }
         }
     };
-    let shape = api
-        .filter(|_| !compressed_request)
-        .and_then(|api| model_calls::request_shape(api, &body));
     let session = api.and_then(|_| (state.session)());
+    if let Some(session) = &session {
+        state.in_flight.begin(session);
+    }
     let started = Instant::now();
     let upstream = state
         .client
-        .request(method, &url)
+        .request(parts.method, &url)
         .headers(headers)
         .body(body)
         .send()
@@ -195,7 +341,7 @@ async fn handle(
             if let Some(api) = api {
                 let observer =
                     ResponseObserver::new(api, StatusCode::BAD_GATEWAY.as_u16(), false, started);
-                (state.sink)(session, observer.finish(shape.as_ref(), Instant::now()));
+                state.report(session, observer.finish(shape.as_ref(), Instant::now()));
             }
             // reqwest errors carry the URL and cause, never request headers.
             return Ok(failure(
@@ -213,9 +359,19 @@ async fn handle(
         .is_some_and(|value| value.starts_with("text/event-stream"));
     if let Some(headers) = response.headers_mut() {
         for (name, value) in upstream.headers() {
-            if !is_hop_header(name) {
-                headers.append(name.clone(), value.clone());
+            if is_hop_header(name) {
+                continue;
             }
+            let rewritten = (name == hyper::header::LOCATION)
+                .then(|| {
+                    value
+                        .to_str()
+                        .ok()
+                        .and_then(|location| state.rewrite_location(location))
+                })
+                .flatten()
+                .and_then(|location| HeaderValue::from_str(&location).ok());
+            headers.append(name.clone(), rewritten.unwrap_or_else(|| value.clone()));
         }
     }
     let stream = upstream.bytes_stream();
@@ -231,7 +387,7 @@ async fn handle(
                 )),
                 shape,
                 session,
-                sink: state.sink.clone(),
+                state: state.clone(),
             };
             BodyExt::boxed_unsync(StreamBody::new(
                 observed.map(|chunk| chunk.map(Frame::data)),
@@ -294,16 +450,14 @@ struct ObservedStream {
     observer: Option<ResponseObserver>,
     shape: Option<RequestShape>,
     session: Option<String>,
-    sink: CallSink,
+    state: Arc<State>,
 }
 
 impl ObservedStream {
     fn report(&mut self) {
         if let Some(observer) = self.observer.take() {
-            (self.sink)(
-                self.session.take(),
-                observer.finish(self.shape.as_ref(), Instant::now()),
-            );
+            let call = observer.finish(self.shape.as_ref(), Instant::now());
+            self.state.report(self.session.take(), call);
         }
     }
 }
@@ -413,9 +567,15 @@ mod tests {
         ).into_boxed_str());
         let (base, request) = upstream(reply).await;
         let (sink, calls) = collecting();
-        let proxy = start(&base, Arc::new(|| Some("session-1".into())), sink)
-            .await
-            .unwrap();
+        let in_flight = Arc::new(CallsInFlight::default());
+        let proxy = start(
+            &base,
+            Arc::new(|| Some("session-1".into())),
+            sink,
+            in_flight.clone(),
+        )
+        .await
+        .unwrap();
         let (status, body) = send(
             proxy.base_url(),
             "/v1/messages",
@@ -435,6 +595,10 @@ mod tests {
         assert_eq!(calls.len(), 1);
         let (session, call) = &calls[0];
         assert_eq!(session.as_deref(), Some("session-1"));
+        assert!(
+            !in_flight.pending("session-1"),
+            "reported calls are no longer in flight"
+        );
         assert!(call.streaming);
         assert_eq!(call.model.as_deref(), Some("m"));
         assert_eq!(call.usage.map(|usage| usage.output_tokens), Some(9));
@@ -445,7 +609,9 @@ mod tests {
         let (base, request) =
             upstream("HTTP/1.1 404 Not Found\r\ncontent-length: 2\r\n\r\n{}").await;
         let (sink, calls) = collecting();
-        let proxy = start(&base, Arc::new(|| None), sink).await.unwrap();
+        let proxy = start(&base, Arc::new(|| None), sink, Arc::default())
+            .await
+            .unwrap();
         let (status, _) = send(proxy.base_url(), "/v1/messages/count_tokens", "{}").await;
         assert_eq!(status, 404);
         request.await.unwrap();
@@ -465,11 +631,208 @@ mod tests {
         let closed = format!("http://{}", listener.local_addr().unwrap());
         drop(listener);
         let (sink, calls) = collecting();
-        let proxy = start(&closed, Arc::new(|| None), sink).await.unwrap();
+        let proxy = start(&closed, Arc::new(|| None), sink, Arc::default())
+            .await
+            .unwrap();
         let (status, body) = send(proxy.base_url(), "/v1/responses", "{}").await;
         assert_eq!(status, 502);
         assert!(body.contains("\"api_error\""));
         assert!(!body.contains("secret-key"));
         assert_eq!(calls.lock().unwrap()[0].1.status, 502);
+    }
+
+    /// `(status, headers, body)` returned for one upstream request.
+    type ScriptedReply = (u16, Vec<(&'static str, &'static str)>, &'static str);
+
+    /// Recorded `(path, body length)` of each request a hyper upstream served.
+    type Served = Arc<Mutex<Vec<(String, usize)>>>;
+
+    /// HTTP/1.1 upstream that drains each request body, including chunked
+    /// uploads, and answers with the next scripted `(status, headers, body)`.
+    async fn scripted_upstream(replies: Vec<ScriptedReply>) -> (String, Served) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let served: Served = Arc::default();
+        let log = served.clone();
+        let replies = Arc::new(Mutex::new(std::collections::VecDeque::from(replies)));
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let (log, replies) = (log.clone(), replies.clone());
+                tokio::spawn(async move {
+                    let service = hyper::service::service_fn(move |request: Request<Incoming>| {
+                        let (log, replies) = (log.clone(), replies.clone());
+                        async move {
+                            let path = request
+                                .uri()
+                                .path_and_query()
+                                .map(|value| value.to_string())
+                                .unwrap_or_default();
+                            let length = request
+                                .into_body()
+                                .collect()
+                                .await
+                                .map(|body| body.to_bytes().len())
+                                .unwrap_or(0);
+                            log.lock().unwrap().push((path, length));
+                            let (status, headers, body) = replies
+                                .lock()
+                                .unwrap()
+                                .pop_front()
+                                .unwrap_or((200, vec![], ""));
+                            let mut response =
+                                Response::new(Full::new(Bytes::from_static(body.as_bytes())));
+                            *response.status_mut() = StatusCode::from_u16(status).unwrap();
+                            for (name, value) in headers {
+                                response
+                                    .headers_mut()
+                                    .insert(name, HeaderValue::from_static(value));
+                            }
+                            Ok::<_, Infallible>(response)
+                        }
+                    });
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+                        .await;
+                });
+            }
+        });
+        (format!("http://{address}/api"), served)
+    }
+
+    #[tokio::test]
+    async fn same_origin_redirects_are_mapped_back_onto_the_proxy() {
+        let (base, _) = scripted_upstream(vec![]).await;
+        let proxy = start(
+            &format!("{base}/v1"),
+            Arc::new(|| None),
+            collecting().0,
+            Arc::default(),
+        )
+        .await
+        .unwrap();
+        let prefix = proxy
+            .base_url()
+            .split_once("/lithe-")
+            .map(|(_, token)| format!("/lithe-{token}"))
+            .unwrap();
+        let origin = base.trim_end_matches("/api");
+        let state = State {
+            prefix: prefix.clone(),
+            upstream: format!("{base}/v1"),
+            origin: url::Url::parse(&format!("{origin}/")).unwrap(),
+            base_path: "/api/v1".into(),
+            client: reqwest::Client::new(),
+            session: Arc::new(|| None),
+            sink: collecting().0,
+            in_flight: Arc::default(),
+        };
+        let rewrite = |location: &str| state.rewrite_location(location);
+        assert_eq!(
+            rewrite("/api/v1/messages?beta=1").unwrap(),
+            format!("{prefix}/messages?beta=1")
+        );
+        assert_eq!(
+            rewrite(&format!("{origin}/api/v1/responses")).unwrap(),
+            format!("{prefix}/responses")
+        );
+        assert_eq!(
+            rewrite("/v2/responses").unwrap(),
+            format!("{prefix}/~origin/v2/responses")
+        );
+        // A path that only shares a textual prefix with the base is outside it.
+        assert_eq!(
+            rewrite("/api/v10/x").unwrap(),
+            format!("{prefix}/~origin/api/v10/x")
+        );
+        // Cross-origin targets and relative references are not rewritten.
+        assert_eq!(rewrite("https://other.example/v1/messages"), None);
+        assert_eq!(rewrite("messages"), None);
+    }
+
+    #[tokio::test]
+    async fn relative_redirects_keep_working_through_the_proxy() {
+        let stream = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n";
+        let (base, served) = scripted_upstream(vec![
+            (307, vec![("location", "/v2/messages")], ""),
+            (200, vec![("content-type", "text/event-stream")], stream),
+        ])
+        .await;
+        let (sink, calls) = collecting();
+        let proxy = start(&base, Arc::new(|| None), sink, Arc::default())
+            .await
+            .unwrap();
+        // reqwest follows a 307 like the Agents' HTTP clients, resending the body.
+        let (status, body) = send(proxy.base_url(), "/v1/messages", r#"{"messages":[]}"#).await;
+        assert_eq!((status, body.as_str()), (200, stream));
+        let served = served.lock().unwrap().clone();
+        assert_eq!(
+            served
+                .iter()
+                .map(|(path, _)| path.as_str())
+                .collect::<Vec<_>>(),
+            ["/api/v1/messages", "/v2/messages"]
+        );
+        drop(proxy);
+        // Both hops are generation requests; the redirected one carries usage.
+        assert!(calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, call)| call.usage.is_some()));
+    }
+
+    #[tokio::test]
+    async fn large_requests_stream_through_instead_of_failing() {
+        let (base, served) =
+            scripted_upstream(vec![(200, vec![], "{}"), (200, vec![], "{}")]).await;
+        let (sink, calls) = collecting();
+        let proxy = start(&base, Arc::new(|| None), sink, Arc::default())
+            .await
+            .unwrap();
+        let large = "x".repeat(OBSERVED_REQUEST_BYTES + 1024);
+        // An unobserved upload and an observed request over the measuring budget.
+        for path in ["/v1/files", "/v1/messages"] {
+            let (status, _) = send(proxy.base_url(), path, &large).await;
+            assert_eq!(status, 200, "{path}");
+        }
+        assert!(served
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(_, length)| *length == large.len()));
+        drop(proxy);
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "only the generation endpoint is observed");
+        assert!(
+            calls[0].1.context.is_none(),
+            "composition is skipped over budget"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn settling_waits_for_reported_calls_within_a_bound() {
+        let in_flight = Arc::new(CallsInFlight::default());
+        let started = tokio::time::Instant::now();
+        in_flight.settle("idle", Duration::from_secs(2)).await;
+        assert_eq!(
+            started.elapsed(),
+            Duration::ZERO,
+            "no attributed call means no wait"
+        );
+        in_flight.begin("session-1");
+        let reporting = in_flight.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            reporting.end("session-1");
+        });
+        in_flight.settle("session-1", Duration::from_secs(2)).await;
+        assert_eq!(started.elapsed(), Duration::from_millis(300));
+        // A stream left open cannot hold the turn beyond the bound.
+        in_flight.begin("session-2");
+        let bounded = tokio::time::Instant::now();
+        in_flight.settle("session-2", Duration::from_secs(2)).await;
+        assert_eq!(bounded.elapsed(), Duration::from_secs(2));
     }
 }

@@ -297,16 +297,8 @@ fn run_with(
         }
     }
     if observe_model_calls {
-        // A call is reported when its response stream ends; drain any event
-        // racing the prompt response under the same deadline.
-        while !model_calls.iter().any(|(_, call)| call.usage.is_some()) && Instant::now() < deadline
-        {
-            if let Ok(AgentEvent::ModelCall { session_id, call }) =
-                events.recv_timeout(Duration::from_millis(10))
-            {
-                model_calls.push((session_id, call));
-            }
-        }
+        // The host settles a turn's observed calls before `turnFinished`, so
+        // they are already present here without draining later events.
         let (session_id, call) = model_calls
             .iter()
             .find(|(_, call)| call.usage.is_some())

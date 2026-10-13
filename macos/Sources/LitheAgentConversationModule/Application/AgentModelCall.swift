@@ -57,9 +57,15 @@ public struct AgentModelCallTotals: Equatable, Sendable {
     public private(set) var cacheWriteTokens: UInt64 = 0
     public private(set) var outputTokens: UInt64 = 0
     public private(set) var reasoningTokens: UInt64?
-    public private(set) var hasUsage = false
-    /// Composition of the latest main-loop request, i.e. one that carried tools.
+    /// Calls whose provider response carried usage counters. Token sums cover
+    /// only these; the rest (e.g. interrupted streams) are missing from them.
+    public private(set) var callsWithUsage = 0
+    public var hasUsage: Bool { callsWithUsage > 0 }
+    /// Composition of the latest main conversation request.
     public private(set) var latestContext: AgentModelCall.Context?
+    /// Once an Agent sends tool definitions, only requests that carry them are
+    /// main conversation requests; tool-less ones are auxiliary (e.g. titles).
+    private var sendsTools = false
     private var firstTokenTotal: TimeInterval = 0
     private var firstTokenCount = 0
     /// Streaming time after the first token, and the output produced in it.
@@ -84,7 +90,7 @@ public struct AgentModelCallTotals: Equatable, Sendable {
         let duration = Double(call.durationMs) / 1000
         self.duration += duration
         if let usage = call.usage {
-            hasUsage = true
+            callsWithUsage += 1
             inputTokens += usage.inputTokens
             cacheReadTokens += usage.cacheReadTokens
             cacheWriteTokens += usage.cacheWriteTokens
@@ -99,10 +105,12 @@ public struct AgentModelCallTotals: Equatable, Sendable {
                 generatedTokens += output
             }
         }
-        // Auxiliary requests such as title generation carry no tools and must
-        // not replace the main conversation's composition.
-        if let context = call.context, context.toolCount + context.mcpToolCount > 0 || latestContext == nil {
-            latestContext = context
+        // Agents that never send tools keep refreshing from every request, so
+        // a growing conversation is not frozen at its first composition.
+        if let context = call.context {
+            let carriesTools = context.toolCount + context.mcpToolCount > 0
+            if carriesTools { sendsTools = true }
+            if carriesTools || !sendsTools { latestContext = context }
         }
     }
 }

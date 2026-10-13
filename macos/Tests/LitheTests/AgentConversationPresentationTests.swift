@@ -436,6 +436,9 @@ struct AgentConversationPresentationTests {
         let statistics = conversation.sessionStatistics
         #expect(AgentSessionStatusPresentation.summary(statistics, locale: locale) == "1 turns 1 steps · 200 tok/s")
         #expect(AgentSessionStatusPresentation.tokenSummary(try #require(statistics.tokens), locale: locale) == "1.4K tok · Cache hit 90%")
+        var partial = try #require(statistics.tokens)
+        partial.callsMissingUsage = 2
+        #expect(AgentSessionStatusPresentation.tokenSummary(partial, locale: locale) == "≥1.4K tok · Cache hit 90%")
         let usage = try #require(AgentContextUsage(usedTokens: 1_000, capacityTokens: 200_000))
         for scheme in [ColorScheme.dark, .light] {
             for card in [AnyView(AgentSessionSummaryCard(statistics: statistics)),

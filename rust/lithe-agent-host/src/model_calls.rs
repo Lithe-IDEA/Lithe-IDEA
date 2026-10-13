@@ -433,18 +433,20 @@ impl ResponseObserver {
                 } else {
                     ("prompt_tokens_details", "completion_tokens_details")
                 };
-                // OpenAI-compatible prompts include cached tokens; DeepSeek
-                // reports them as `prompt_cache_hit_tokens` instead.
-                let cached = count(
-                    usage
-                        .get(details.0)
-                        .and_then(|detail| detail.get("cached_tokens")),
-                )
-                .or_else(|| count(usage.get("prompt_cache_hit_tokens")))
-                .unwrap_or_default();
+                // OpenAI-compatible prompts include cache reads and writes;
+                // DeepSeek reports reads as `prompt_cache_hit_tokens` instead.
+                let detail =
+                    |key: &str| count(usage.get(details.0).and_then(|detail| detail.get(key)));
+                let cached = detail("cached_tokens")
+                    .or_else(|| count(usage.get("prompt_cache_hit_tokens")))
+                    .unwrap_or_default();
+                let written = detail("cache_write_tokens").unwrap_or_default();
                 if let Some(prompt) = count(usage.get(input)) {
+                    // Clamp malformed counters so the three buckets never exceed the prompt.
                     merged.cache_read_tokens = cached.min(prompt);
-                    merged.input_tokens = prompt - merged.cache_read_tokens;
+                    merged.cache_write_tokens = written.min(prompt - merged.cache_read_tokens);
+                    merged.input_tokens =
+                        prompt - merged.cache_read_tokens - merged.cache_write_tokens;
                 }
                 if let Some(value) = count(usage.get(output)) {
                     merged.output_tokens = value;
@@ -557,6 +559,48 @@ mod tests {
             (1000, 4000, 300)
         );
         assert_eq!(usage.reasoning_tokens, Some(120));
+    }
+
+    #[test]
+    fn openai_compatible_cache_writes_are_a_separate_input_bucket() {
+        for (api, usage) in [
+            (
+                ModelApi::Responses,
+                json!({"type": "response.completed", "response": {"usage": {
+                "input_tokens": 1000, "input_tokens_details": {"cached_tokens": 600, "cache_write_tokens": 300},
+                "output_tokens": 10}}}),
+            ),
+            (
+                ModelApi::ChatCompletions,
+                json!({"choices": [], "usage": {
+                "prompt_tokens": 1000, "prompt_tokens_details": {"cached_tokens": 600, "cache_write_tokens": 300},
+                "completion_tokens": 10}}),
+            ),
+        ] {
+            let call = observe(api, true, &[(&format!("data: {usage}\n\n"), 10)]);
+            let usage = call.usage.unwrap();
+            assert_eq!(
+                (
+                    usage.input_tokens,
+                    usage.cache_read_tokens,
+                    usage.cache_write_tokens
+                ),
+                (100, 600, 300),
+                "{api:?}"
+            );
+        }
+        // Counters larger than the prompt are clamped instead of underflowing.
+        let call = observe(ModelApi::ChatCompletions, true, &[(
+            "data: {\"usage\":{\"prompt_tokens\":10,\"prompt_tokens_details\":{\"cached_tokens\":8,\"cache_write_tokens\":9}}}\n\n", 5)]);
+        let usage = call.usage.unwrap();
+        assert_eq!(
+            (
+                usage.input_tokens,
+                usage.cache_read_tokens,
+                usage.cache_write_tokens
+            ),
+            (0, 8, 2)
+        );
     }
 
     #[test]

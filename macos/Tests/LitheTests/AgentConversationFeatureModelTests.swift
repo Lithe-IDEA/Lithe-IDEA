@@ -1605,6 +1605,50 @@ struct AgentConversationFeatureModelTests {
     }
 
     @Test
+    func callsWithoutUsageMakeTokenTotalsAnExplicitLowerBound() throws {
+        var conversation = AgentConversation()
+        conversation.recordModelCall(try modelCall(usage: ["inputTokens": 100, "cacheReadTokens": 900,
+                                                            "cacheWriteTokens": 0, "outputTokens": 50]))
+        // An interrupted stream or a provider without final usage reports no counters.
+        conversation.recordModelCall(try modelCall(usage: nil))
+        let tokens = try #require(conversation.sessionStatistics.tokens)
+        #expect(tokens.source == .modelCalls)
+        #expect(tokens.totalTokens == 1050)
+        #expect(tokens.callsMissingUsage == 1)
+        #expect(conversation.modelCalls.callCount == 2)
+        #expect(conversation.modelCalls.callsWithUsage == 1)
+    }
+
+    @Test
+    func contextCompositionFollowsMainRequestsWithAndWithoutTools() throws {
+        // Agents that never send tools refresh the composition on every request.
+        var toolless = AgentModelCallTotals()
+        toolless.record(try modelCall(context: context(messages: 1000, tools: 0)))
+        toolless.record(try modelCall(context: context(messages: 5000, tools: 0)))
+        #expect(toolless.latestContext?.messageTokens == 5000)
+        // Once tools are sent, tool-less auxiliary requests do not replace it.
+        var main = AgentModelCallTotals()
+        main.record(try modelCall(context: context(messages: 1000, tools: 0)))
+        main.record(try modelCall(context: context(messages: 8000, tools: 12)))
+        main.record(try modelCall(context: context(messages: 40, tools: 0)))
+        #expect(main.latestContext?.messageTokens == 8000)
+        main.record(try modelCall(context: context(messages: 9000, tools: 12)))
+        #expect(main.latestContext?.messageTokens == 9000)
+    }
+
+    private func modelCall(usage: [String: Any]? = nil, context: [String: Any]? = nil) throws -> AgentModelCall {
+        var call: [String: Any] = ["api": "anthropicMessages", "status": 200, "streaming": true, "durationMs": 1000]
+        if let usage { call["usage"] = usage }
+        if let context { call["context"] = context }
+        return try #require(AgentModelCall.parse(call))
+    }
+
+    private func context(messages: Int, tools: Int) -> [String: Any] {
+        ["systemPromptTokens": 100, "toolTokens": tools * 100, "mcpToolTokens": 0, "messageTokens": messages,
+         "toolCount": tools, "mcpToolCount": 0, "scaledToUsage": false]
+    }
+
+    @Test
     func agentReportedTokensDistinguishInclusiveAndDisjointCacheAccounting() throws {
         // The shared fixture uses disjoint buckets: total = input + output + thought + cache.
         let disjoint = try #require(AgentTurnUsage.parse(["totalTokens": 25000, "inputTokens": 18000, "outputTokens": 2000,

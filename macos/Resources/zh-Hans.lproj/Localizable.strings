@@ -2878,3 +2878,4 @@
 "Non-streaming" = "非流式";
 "%lld non-streaming" = "%lld 次非流式";
 "Model calls observed by the local proxy during this turn. TTFT is the average time to the first generated token." = "本轮由本机代理观测到的模型调用；首字为首个生成 token 的平均等待时间。";
+"%lld requests returned no usage, so these totals are a lower bound." = "有 %lld 次请求未返回用量，以上为最低值。";

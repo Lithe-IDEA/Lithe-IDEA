@@ -150,8 +150,11 @@ impl Harness {
             route,
             subscription.then(|| PathBuf::from("/fixture/codex")),
             receiver,
-            permissions.clone(),
-            Arc::new(Mutex::new(HashMap::new())),
+            TurnActivity {
+                permissions: permissions.clone(),
+                turns: Arc::new(Mutex::new(HashMap::new())),
+                calls_in_flight: Arc::default(),
+            },
             Arc::new(move |event| {
                 let _ = event_tx.send(event);
             }),

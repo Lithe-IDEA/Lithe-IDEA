@@ -17,6 +17,9 @@ public struct AgentSessionTokens: Equatable, Sendable {
     public let cacheWriteTokens: UInt64
     public let outputTokens: UInt64
     public let reasoningTokens: UInt64?
+    /// Observed calls without provider counters; when non-zero the sums are a
+    /// lower bound rather than the session total.
+    public var callsMissingUsage = 0
 
     public var promptTokens: UInt64 { uncachedInputTokens + cacheReadTokens + cacheWriteTokens }
     public var totalTokens: UInt64 { promptTokens + outputTokens }
@@ -48,7 +51,8 @@ public struct AgentSessionStatistics: Equatable, Sendable {
             tokens = AgentSessionTokens(source: .modelCalls, uncachedInputTokens: observed.inputTokens,
                                         cacheReadTokens: observed.cacheReadTokens,
                                         cacheWriteTokens: observed.cacheWriteTokens,
-                                        outputTokens: observed.outputTokens, reasoningTokens: observed.reasoningTokens)
+                                        outputTokens: observed.outputTokens, reasoningTokens: observed.reasoningTokens,
+                                        callsMissingUsage: observed.callCount - observed.callsWithUsage)
         } else {
             tokens = turns.last(where: { $0.usage != nil })?.usage.map(Self.agentTokens)
         }

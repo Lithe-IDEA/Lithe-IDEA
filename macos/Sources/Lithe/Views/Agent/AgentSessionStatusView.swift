@@ -43,8 +43,13 @@ enum AgentSessionStatusPresentation {
         return text
     }
 
+    /// `≥` marks a lower bound when some observed calls returned no usage.
+    static func lowerBound(_ tokens: AgentSessionTokens) -> String {
+        tokens.callsMissingUsage > 0 ? "≥" : ""
+    }
+
     static func tokenSummary(_ tokens: AgentSessionTokens, locale: Locale) -> String {
-        var text = compactTokens(tokens.totalTokens, locale: locale) + " tok"
+        var text = lowerBound(tokens) + compactTokens(tokens.totalTokens, locale: locale) + " tok"
         if let hit = tokens.cacheHitRate {
             text += " · " + String(format: String(localized: "Cache hit %@"), percent(hit, locale: locale))
         }
@@ -173,7 +178,8 @@ struct AgentTokenUsageCard: View {
 
     var body: some View {
         AgentStatusCard(title: "Token usage", systemImage: "cylinder.split.1x2",
-                        trailing: AgentSessionStatusPresentation.tokens(tokens.totalTokens, locale: locale)) {
+                        trailing: AgentSessionStatusPresentation.lowerBound(tokens)
+                            + AgentSessionStatusPresentation.tokens(tokens.totalTokens, locale: locale)) {
             AgentStatusRow("Cache hit", value: tokens.cacheHitRate.map { AgentSessionStatusPresentation.percent($0, locale: locale) } ?? "—")
             AgentStatusRow("Uncached input", value: AgentSessionStatusPresentation.tokens(tokens.uncachedInputTokens, locale: locale))
             AgentStatusRow("Cache read", value: AgentSessionStatusPresentation.tokens(tokens.cacheReadTokens, locale: locale))
@@ -185,9 +191,14 @@ struct AgentTokenUsageCard: View {
                 AgentStatusRow("Reasoning", value: AgentSessionStatusPresentation.tokens(reasoning, locale: locale))
             }
         } footnote: {
-            tokens.source == .modelCalls
-                ? Text("Counts returned by the model provider for every request in this session.")
-                : Text("Latest turn as reported by the Agent; its accounting scope depends on the Agent. Turn on Model call statistics for session totals.")
+            if tokens.callsMissingUsage > 0 {
+                Text(String(format: String(localized: "%lld requests returned no usage, so these totals are a lower bound."),
+                            tokens.callsMissingUsage))
+            } else if tokens.source == .modelCalls {
+                Text("Counts returned by the model provider for every request in this session.")
+            } else {
+                Text("Latest turn as reported by the Agent; its accounting scope depends on the Agent. Turn on Model call statistics for session totals.")
+            }
         }
     }
 }

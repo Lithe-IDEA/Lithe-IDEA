@@ -101,6 +101,9 @@ struct LitheSplitPaneView<Sized: View, Flexible: View>: View {
             panes(size)
         }
         .environment(\.isLithePaneResizing, ancestorIsDragging || isDragging)
+        .onChange(of: defaultSize) { _ in
+            if !isDragging, onCommit != nil { draggedSize = nil }
+        }
         .onDisappear { isDragging = false }
     }
 
@@ -163,14 +166,10 @@ struct LitheSplitPaneView<Sized: View, Flexible: View>: View {
             onDragEnded: { translation in
                 isDragging = false
                 let finalSize = resolved(from: translation)
-                if let onCommit {
-                    onCommit(finalSize)
-                    // The host now owns the value and feeds it back as
-                    // `defaultSize`; keeping a dragged size too would shadow it.
-                    draggedSize = nil
-                } else {
-                    draggedSize = finalSize
-                }
+                // Keep the final bounds until the host echoes its new default;
+                // publishing a commit does not synchronously rebuild this view.
+                draggedSize = finalSize
+                onCommit?(finalSize)
             }
         )
         .frame(

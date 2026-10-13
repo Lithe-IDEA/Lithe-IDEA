@@ -130,7 +130,7 @@ final class WorkbenchFeatureModel: ObservableObject {
 
     func setGroupFraction(_ value: Double, for anchor: DockAnchor) {
         guard value.isFinite else { return }
-        groupFractions[anchor.rawValue] = min(0.9, max(0.1, value))
+        groupFractions[anchor.rawValue] = min(1, max(0, value))
     }
 
     func toggleVisibility(_ toolWindow: ToolWindow) {
@@ -182,7 +182,7 @@ final class WorkbenchFeatureModel: ObservableObject {
         }
         toolWindowStates = states
         groupFractions = (layout.groupFractions ?? [:]).filter {
-            DockAnchor(rawValue: $0.key) != nil && $0.value.isFinite && (0.1...0.9).contains($0.value)
+            DockAnchor(rawValue: $0.key) != nil && $0.value.isFinite && (0...1).contains($0.value)
         }
         return layout
     }

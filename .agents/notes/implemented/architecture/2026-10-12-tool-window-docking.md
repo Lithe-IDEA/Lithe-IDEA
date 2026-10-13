@@ -35,6 +35,7 @@ macOS 的工具窗口位置由工作台维护，功能模块继续维护自己�
 展开状态恢复后先等待旧模块图退出，再通过既有激活入口恢复所需内容；模块依赖的 renderer 使用已有 featureIdentity 区分加载占位与真实功能对象，防止内容比较把就绪状态缓存成占位。
 
 组内分隔复用 `LitheSplitPaneView`，高频尺寸留在局部容器，只在结束时保存比例。
+松开后继续显示最终局部尺寸，直到父布局传回新的默认尺寸才交回控制，避免先回到旧尺寸再跳到新尺寸。保存比例允许完整的 0～1 范围，实际最小面板尺寸由分隔容器按当前可用空间约束；不能在保存时再限制到 10%～90%，否则合法的窄面板会在松开和重启时变大。
 每个可见分组分别使用现有工作台面板背景和圆角；圆角不能包在整个停靠边缘外层，否则 Project 与下方 Terminal 会连成一个面板。组间保留工作台间距，不绘制额外亮线；背景图片和窗口渐变继续使用原样式入口。深浅主题的原生像素回归覆盖左、右、底部两个分组的间距及相邻圆角。
 
 正确做法：Terminal 移到左侧第二组后，打开它只替换该组的活动窗口；原右侧 Agent 和底部 Run 保持各自状态。
@@ -60,6 +61,7 @@ macOS 的工具窗口位置由工作台维护，功能模块继续维护自己�
 - `./scripts/verify-runtime-bundle-immutability.sh`
 - `./scripts/verify-platform-feature-matrix.sh`
 - `./scripts/verify-agent-notes.sh`
+- `LitheSplitPaneCollapseTests.releaseWaitsForCommittedSize` 使用原生按下、拖动、松开事件，故意延迟父布局回传，检查松开后的最终尺寸、回传后继续跟随父布局及内容不重新挂载；`ToolWindowDockingTests.narrowGroupFractionSurvivesCommitAndReload` 检查窄面板比例保存和恢复。
 - 实际工作台检查跨边缘移动、同组排序、双组打开、收起正确窗口、Esc/窗口外取消、窄窗口及重启恢复；模型检查不能替代原生拖放验收。
 
 ## 适用范围

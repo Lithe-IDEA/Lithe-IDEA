@@ -90,6 +90,20 @@ struct ToolWindowDockingTests {
         #expect(restored.isVisible(.project))
     }
 
+    @Test(arguments: [0.0375, 0.95625])
+    func narrowGroupFractionSurvivesCommitAndReload(fraction: Double) {
+        let store = DockingTestStore()
+        let persistence = WorkbenchLayoutStore(store: store)
+        let workspace = URL(fileURLWithPath: "/fixture/docking/narrow")
+        let model = WorkbenchFeatureModel(layoutStore: persistence)
+        model.setGroupFraction(fraction, for: .left)
+        #expect(model.groupFractions["left"] == fraction)
+        model.saveLayout(.init(sidebarWidth: 310, topPaneHeight: 280), for: workspace)
+        let restored = WorkbenchFeatureModel(layoutStore: persistence)
+        _ = restored.loadLayout(for: workspace)
+        #expect(restored.groupFractions["left"] == fraction)
+    }
+
     @Test func legacyLayoutAndUnknownOrDuplicateRecordsAreSafe() throws {
         let store = DockingTestStore()
         let persistence = WorkbenchLayoutStore(store: store)

@@ -221,6 +221,7 @@ struct WorkbenchView: View {
     @State private var workbenchBackgroundImage: NSImage?
     @State private var isBackgroundPickerPresented = false
     @State private var isRunConfigurationPickerPresented = false
+    @State private var isSettingsMenuPresented = false
 
     var body: some View {
         let encodingRequest = model.pendingEncodingReopen
@@ -770,8 +771,7 @@ struct WorkbenchView: View {
                     stopExecutionButton
                 }
             }
-            activityToolButton(ideaAssetPath: "expui/general/settings@20x20.svg", help: "Settings", tooltipPlacement: .below,
-                               isSelected: model.workbenchFeature.isSettingsPresented) { model.showSettings() }
+            settingsMenuButton
         }
         .padding(.leading, WorkbenchTopBarMetrics.leadingInset)
         .padding(.trailing, 10)
@@ -1096,6 +1096,32 @@ struct WorkbenchView: View {
             }
             .environmentObject(model)
             .environmentObject(settings)
+        }
+    }
+
+    private var settingsMenuButton: some View {
+        Button { isSettingsMenuPresented.toggle() } label: {
+            LitheIDEAIcon(resourcePath: "expui/general/settings@20x20.svg", size: ActivityBarMetrics.iconSize)
+                .frame(width: 30, height: 30)
+                .litheRowHover(isActive: isSettingsMenuPresented, cornerRadius: 6,
+                               activeBackground: LitheTheme.hoverBackground)
+        }
+        .buttonStyle(.litheNoPress)
+        .frame(width: ActivityBarMetrics.width, height: LitheTheme.Metrics.toolbarHeight)
+        .workbenchHoverHelp(Text(LocalizedStringKey("Settings")), placement: .below)
+        .accessibilityLabel(Text(LocalizedStringKey("Settings")))
+        .accessibilityIdentifier("workbench-settings-menu")
+        .overlay {
+            LitheDropdownPopover(isPresented: $isSettingsMenuPresented, items: [
+                .action("Settings…", icon: AnyView(LitheIDEAIcon(resourcePath: "expui/general/settings.svg", size: 16)),
+                        initiallySelected: true, shortcut: model.keyboardShortcutFeature.displayText(for: "settings")) {
+                    model.showSettings()
+                },
+                .action("Plugins…") { model.showSettings(category: .plugins) },
+                .separator,
+                .action("Theme…") { model.showSettings(category: .general) },
+                .action("Keymap…") { model.showSettings(category: .keymap) }
+            ]) { EmptyView() }
         }
     }
 

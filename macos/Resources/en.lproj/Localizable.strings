@@ -1489,3 +1489,8 @@
 "Succeeded, line %d" = "Succeeded, line %d";
 
 "Failed, line %d" = "Failed, line %d";
+
+/* Main toolbar settings menu. */
+"Plugins…" = "Plugins…";
+"Theme…" = "Theme…";
+"Keymap…" = "Keymap…";

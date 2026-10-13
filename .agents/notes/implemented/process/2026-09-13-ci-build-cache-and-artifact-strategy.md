@@ -66,6 +66,13 @@ macOS runner（GitHub 托管的 Mac 构建机）按组织共享，Free 计划同
   `git diff --check` 和矩阵自身校验，不选择任何 runner lane。`shared/contracts/`
   下的 JSON schema 与 `shared/fixtures/` 会被各平台代码和测试读取，仍按共享
   契约选择 Swift、Rust Core 和 Windows lane。
+- 高频改动路径按真实消费方选择 lane，不落入“未知路径全量验证”的兜底分支：
+  `frontend/editor/` 与根目录 `package.json`、`bun.lock` 只被 macOS 打包 lane
+  （Bun 测试和 WebKit 工作台探针）与 Windows 前端 lane 使用；本地化
+  `*.lproj` 与 `WorkbenchView.swift` 不再选择独立插件 lane。插件相关的本地化
+  断言放在 Swift lane 会运行的 `AppLocalizationTests` 中，测试名不能包含
+  `Plugin`，否则会被 Swift lane 的插件过滤跳过。按上周 18 个 PR 提交回放，
+  Rust Core 从 18 次降到 3 次，Windows Rust 与真实 JDT 降到 3 次。
 - 分类脚本读取 `LITHE_CI_DRAFT_PULL_REQUEST`。Draft PR 关闭所有 macOS 和
   Windows lane，只保留 Linux 上的分类、diff、注释和元数据检查；PR 标记为
   ready for review 时重新触发完整分类。

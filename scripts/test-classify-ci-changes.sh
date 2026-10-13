@@ -153,6 +153,18 @@ modify_feature_matrix_and_swift() {
     modify_swift_source
 }
 modify_shared_fixture() { printf '%s\n' '{"operation":"updated"}' > shared/fixtures/core/test.json; }
+modify_shared_editor() {
+    mkdir -p frontend/editor/src
+    printf '%s\n' 'export const layout = 2;' > frontend/editor/src/workbench.ts
+}
+modify_workbench_view() {
+    mkdir -p macos/Sources/Lithe/Views/Workbench
+    printf '%s\n' 'struct UpdatedWorkbenchView {}' > macos/Sources/Lithe/Views/Workbench/WorkbenchView.swift
+}
+modify_localization_strings() {
+    mkdir -p macos/Resources/zh-Hans.lproj
+    printf '%s\n' '"Open" = "打开";' > macos/Resources/zh-Hans.lproj/Localizable.strings
+}
 modify_windows_frontend() { printf '%s\n' 'export const value = 2;' > windows/tauri/src/value.ts; }
 modify_windows_rust() { printf '%s\n' 'fn main() { println!("updated"); }' > windows/tauri/src-tauri/src/main.rs; }
 modify_download_cache_validator() { printf '%s\n' 'console.log("updated");' > scripts/verify-download-cache.mjs; }
@@ -270,6 +282,15 @@ assert_classification feature-matrix \
 assert_classification feature-matrix-with-swift \
     "$(classification true false false false false false false false false false)" \
     modify_feature_matrix_and_swift
+assert_classification shared-editor \
+    "$(classification false false false false false true true false false false)" \
+    modify_shared_editor
+assert_classification workbench-view \
+    "$(classification true false true false false true false false false false)" \
+    modify_workbench_view
+assert_classification localization-strings \
+    "$(classification true false true false false true false false false false)" \
+    modify_localization_strings
 assert_classification windows-frontend \
     "$(classification false false false false false false true false false false)" \
     modify_windows_frontend

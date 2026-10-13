@@ -205,8 +205,10 @@ while IFS=$'\t' read -r status first_path _; do
             ;;
         macos/sources/lithe/views/workbench/workbenchview.swift)
             # The root workbench composes both database and plugin-owned UI.
+            # Plugin tests cover plugin models and packages rather than this
+            # view, and it is edited by most workbench pull requests, so the
+            # Swift lane's full compile covers it without the plugin runner.
             swift=true
-            plugins=true
             swift_database=true
             macos_release=true
             ;;
@@ -237,9 +239,11 @@ while IFS=$'\t' read -r status first_path _; do
             swift_database=true
             ;;
         macos/resources/*.lproj/*)
-            # Localization files contain both database and plugin-facing copy.
+            # Localization files contain database copy and are assembled into
+            # the package. Their plugin-facing coverage lives in
+            # AppLocalizationTests, which the Swift lane runs, so UI copy
+            # changes do not reserve the separate plugin runner.
             swift=true
-            plugins=true
             swift_database=true
             macos_release=true
             ;;
@@ -332,6 +336,14 @@ while IFS=$'\t' read -r status first_path _; do
             rust_core=true
             windows=true
             windows_rust=true
+            ;;
+        frontend/editor/*|package.json|bun.lock)
+            # The shared Monaco editor and the Bun workspace are consumed by the
+            # macOS package (Bun tests and the WebKit workbench probe run in the
+            # package lane) and by the Windows frontend lane. Swift, Rust, and
+            # JDT lanes do not read them.
+            macos_release=true
+            windows=true
             ;;
         windows/tauri/src-tauri/*.rs|windows/tauri/src-tauri/cargo.toml|windows/tauri/src-tauri/cargo.lock|windows/tauri/crates/*)
             windows=true

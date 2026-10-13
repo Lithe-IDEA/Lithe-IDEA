@@ -37,19 +37,22 @@ final class EditorTabOrderFeatureModel: ObservableObject {
         if groupSelections[group] != item { groupSelections[group] = item }
     }
 
+    func canDrop(_ item: EditorTabItem, into group: UUID, side: EditorGroupDropSide) -> Bool {
+        guard !item.isDatabaseTab, items.contains(item), groupLayout.groups.contains(group) else { return false }
+        return placements[item] != group || (side != .center && items(in: group).count > 1)
+    }
+
     /// A drop moves membership only; it never closes or reopens the underlying resource.
     @discardableResult
     func drop(_ item: EditorTabItem, into group: UUID, side: EditorGroupDropSide) -> Bool {
-        guard !item.isDatabaseTab, items.contains(item), groupLayout.groups.contains(group) else { return false }
+        guard canDrop(item, into: group, side: side) else { return false }
         if side == .center {
-            guard placements[item] != group else { return false }
             placements[item] = group
             var ordered = items.filter { $0 != item }
             let last = ordered.lastIndex { placements[$0] == group }
             ordered.insert(item, at: last.map { $0 + 1 } ?? ordered.count)
             if ordered != items { items = ordered }
         } else {
-            guard placements[item] != group || items(in: group).count > 1 else { return false }
             let created = UUID()
             let new = EditorGroupLayout.group(created), old = EditorGroupLayout.group(group)
             let leading = side == .left || side == .top

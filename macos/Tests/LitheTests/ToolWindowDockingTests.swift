@@ -6,6 +6,55 @@ import Testing
 @Suite("Tool window docking")
 @MainActor
 struct ToolWindowDockingTests {
+    @Test func clippedToolButtonsDoNotCaptureOtherGroupsOrBecomeDropTargets() throws {
+        let drag = ToolWindowDragState()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 400),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let root = try #require(window.contentView)
+        let clip = NSClipView(frame: CGRect(x: 0, y: 0, width: 40, height: 280))
+        let document = NSView(frame: CGRect(x: 0, y: 0, width: 40, height: 400))
+        clip.documentView = document; root.addSubview(clip)
+        let tools = Array(WorkbenchFeatureModel.ToolWindow.allCases.prefix(10))
+        var sources: [ToolWindowDragSource.SourceView] = []
+        var clicks = 0, hiddenDragStarts = 0, neighborClicks = 0
+        defer { sources.forEach { $0.dismantle() }; window.close() }
+        for index in 0..<9 {
+            let source = ToolWindowDragSource.SourceView(frame: CGRect(x: 0, y: index * 40, width: 40, height: 40))
+            source.tool = tools[index]; source.position = .init(anchor: .left, group: .primary); source.drag = drag
+            source.click = { clicks += 1 }
+            source.image = { hiddenDragStarts += 1; return nil }
+            sources.append(source); document.addSubview(source)
+        }
+        clip.scroll(to: CGPoint(x: 0, y: 40))
+        let neighbor = ToolWindowDragSource.SourceView(frame: CGRect(x: 0, y: 280, width: 40, height: 40))
+        neighbor.tool = tools[9]; neighbor.position = .init(anchor: .left, group: .secondary); neighbor.drag = drag
+        neighbor.click = { neighborClicks += 1 }
+        sources.append(neighbor); root.addSubview(neighbor)
+        func send(_ type: NSEvent.EventType, y: CGFloat) throws {
+            NSApp.sendEvent(try #require(NSEvent.mouseEvent(with: type, location: CGPoint(x: 20, y: y),
+                modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)))
+        }
+        try send(.leftMouseDown, y: 295); try send(.leftMouseDragged, y: 305); try send(.leftMouseUp, y: 305)
+        #expect(clicks == 0 && hiddenDragStarts == 0 && neighborClicks == 1)
+        drag.begin(tools[1])
+        #expect(drag.target(at: CGPoint(x: 20, y: 300))?.before == tools[9])
+        drag.finish()
+        neighbor.isHidden = true
+        #expect(drag.target(at: CGPoint(x: 20, y: 300)) == nil)
+        // A partly clipped icon only accepts the visible part, including release.
+        clip.scroll(to: CGPoint(x: 0, y: 20))
+        try send(.leftMouseDown, y: 270); try send(.leftMouseUp, y: 290)
+        #expect(clicks == 0)
+        try send(.leftMouseDown, y: 270); try send(.leftMouseUp, y: 270)
+        #expect(clicks == 1)
+        document.isHidden = true
+        try send(.leftMouseDown, y: 270); try send(.leftMouseUp, y: 270)
+        #expect(clicks == 1)
+        #expect(drag.target(at: CGPoint(x: 20, y: 270)) == nil)
+    }
+
     @Test(arguments: [DockAnchor.left, .right, .bottom], [ColorScheme.dark, .light])
     func dockGroupsHaveIndependentRoundedSurfaces(anchor: DockAnchor, scheme: ColorScheme) throws {
         let host = NSHostingView(rootView: WorkbenchDockGroups(

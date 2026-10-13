@@ -327,6 +327,14 @@ final class MonacoWorkbenchSession: NSObject, ObservableObject, WKNavigationDele
         return view
     }
 
+    private func isActiveDocument(_ id: UUID, model: AppModel) -> Bool {
+        model.activeDocumentID == id && model.activeEditorTerminalSession == nil
+            && model.activeMediaDocument == nil && !model.isDatabaseWorkspaceSelected && !model.isRepositoryDiffSelected
+            && model.editorTabOrderFeature.groupLayout.groups.contains {
+                model.editorTabOrderFeature.selectedItem(in: $0) == .document(id)
+            }
+    }
+
     func makeContainer(ownerID: UUID, isPreview: Bool) -> NSView {
         let container = MountContainer()
         container.didAttach = { [weak self, weak container] in
@@ -334,7 +342,7 @@ final class MonacoWorkbenchSession: NSObject, ObservableObject, WKNavigationDele
             // Focus after that mount transaction, and reject an obsolete target.
             DispatchQueue.main.async { [weak self, weak container] in
                 guard let self, self.viewOwnerID == ownerID, !isPreview,
-                      let id = self.scopedDocumentID, self.model?.activeDocumentID == id,
+                      let id = self.scopedDocumentID, let model = self.model, self.isActiveDocument(id, model: model),
                       let window = container?.window, let webView = self.webView else { return }
                 window.makeFirstResponder(webView)
                 if self.ready { self.call("window.lithe.setFocused(true)") }
@@ -789,7 +797,7 @@ final class MonacoWorkbenchSession: NSObject, ObservableObject, WKNavigationDele
             let interval = LitheSignpost.begin("monaco.document.activate")
             var payload: [String: Any] = ["id": id,
                 "revision": revisions[id] ?? 0, "filename": document.url.lastPathComponent,
-                "locationRevision": document.locationRevision, "readonly": document.isReadOnly, "focus": surface == "primary" && (scopedDocumentID == nil || model.activeDocumentID == document.id),
+                "locationRevision": document.locationRevision, "readonly": document.isReadOnly, "focus": surface == "primary" && (scopedDocumentID == nil || isActiveDocument(document.id, model: model)),
                 "measure": LithePerformanceBaseline.isEnabled]
             // A retained Monaco model already owns its current text and undo
             // history. Tab activation only needs its identity and view state.
@@ -811,8 +819,7 @@ final class MonacoWorkbenchSession: NSObject, ObservableObject, WKNavigationDele
             call("window.lithe.retain(ids)", arguments: ["ids": Array(liveIDs).sorted()])
         }
         if scopedDocumentID != nil, surface == "primary" {
-            let focused = model.activeDocumentID == document.id && model.activeEditorTerminalSession == nil
-                && model.activeMediaDocument == nil && !model.isDatabaseWorkspaceSelected && !model.isRepositoryDiffSelected
+            let focused = isActiveDocument(document.id, model: model)
             if lastEditorFocused != focused {
                 lastEditorFocused = focused
                 if focused, let webView { webView.window?.makeFirstResponder(webView) }

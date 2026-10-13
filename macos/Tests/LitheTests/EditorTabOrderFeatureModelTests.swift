@@ -8,6 +8,22 @@ import Testing
 @Suite("Editor tab order")
 @MainActor
 struct EditorTabOrderFeatureModelTests {
+    @Test func splitMenuEligibilityMatchesDropForSingleAndMixedGroups() throws {
+        let model = EditorTabOrderFeatureModel()
+        let a = EditorTabItem.document(UUID()), b = EditorTabItem.document(UUID())
+        model.moveToEnd(a); model.moveToEnd(b)
+        let left = try #require(model.groupLayout.groups.first)
+        #expect(model.canDrop(b, into: left, side: .right))
+        #expect(model.drop(b, into: left, side: .right))
+        let right = try #require(model.groupLayout.groups.last)
+        #expect(!model.canDrop(b, into: right, side: .right))
+        #expect(!model.drop(b, into: right, side: .right))
+        model.moveToEnd(.terminal(UUID()))
+        #expect(model.canDrop(b, into: right, side: .right))
+        #expect(model.drop(b, into: right, side: .right))
+        #expect(!model.canDrop(a, into: UUID(), side: .right))
+    }
+
     @Test func closeTargetsRespectGroupsMixedTabsAndReordering() throws {
         let model = EditorTabOrderFeatureModel()
         let a = UUID(), b = UUID(), c = UUID(), terminal = UUID()

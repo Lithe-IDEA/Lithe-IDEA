@@ -150,6 +150,11 @@ struct ToolWindowDragSource: NSViewRepresentable {
         private var preview: NSPanel?
         private var imageOrigin: NSPoint = .zero
 
+        private var visibleHitRect: CGRect {
+            guard !isHiddenOrHasHiddenAncestor else { return .null }
+            return bounds.intersection(visibleRect)
+        }
+
         // The local monitor owns presses; the SwiftUI button still owns hover and help.
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
         override func layout() { super.layout(); record() }
@@ -157,7 +162,8 @@ struct ToolWindowDragSource: NSViewRepresentable {
             guard window != nil, let tool, let position else { return }
             drag?.entries[tool] = ({ [weak self] in
                 guard let self, self.window != nil else { return .zero }
-                return self.convert(self.bounds, to: nil)
+                let visible = self.visibleHitRect
+                return visible.isEmpty ? .null : self.convert(visible, to: nil)
             }, position, ObjectIdentifier(self))
         }
         override func viewDidMoveToWindow() {
@@ -176,7 +182,7 @@ struct ToolWindowDragSource: NSViewRepresentable {
                 guard event.window === self.window else { return event }
                 if event.type == .leftMouseDown {
                     guard !event.modifierFlags.contains(.control),
-                          self.bounds.contains(self.convert(event.locationInWindow, from: nil)) else { return event }
+                          self.visibleHitRect.contains(self.convert(event.locationInWindow, from: nil)) else { return event }
                     self.mouseDown(with: event); return nil
                 }
                 guard self.pressed != nil else { return event }
@@ -192,7 +198,7 @@ struct ToolWindowDragSource: NSViewRepresentable {
         }
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         override func mouseDown(with event: NSEvent) {
-            guard isEnabled else { return }
+            guard isEnabled, visibleHitRect.contains(convert(event.locationInWindow, from: nil)) else { return }
             pressed = event; cancelled = false
         }
         override func mouseUp(with event: NSEvent) {
@@ -206,7 +212,7 @@ struct ToolWindowDragSource: NSViewRepresentable {
             defer { cancelled = false }
             guard !cancelled else { return }
             if wasDragging, let destination, let tool { commit?(tool, destination) }
-            else if !wasDragging, bounds.contains(convert(event.locationInWindow, from: nil)) { click?() }
+            else if !wasDragging, visibleHitRect.contains(convert(event.locationInWindow, from: nil)) { click?() }
         }
         override func mouseDragged(with event: NSEvent) {
             guard !cancelled, let pressed, let tool, let drag, let window else { return }

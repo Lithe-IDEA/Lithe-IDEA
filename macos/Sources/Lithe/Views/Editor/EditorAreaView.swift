@@ -1222,7 +1222,7 @@ struct EditorAreaView: View {
             .action("Close", action: { model.requestCloseDocument(document) }),
             .action(
                 "Open in Right Split",
-                isEnabled: model.openDocuments.count >= 2,
+                isEnabled: groupID.map { model.editorTabOrderFeature.canDrop(.document(document.id), into: $0, side: .right) } ?? false,
                 action: {
                     if let groupID { model.moveEditorTab(.document(document.id), toGroup: groupID, side: .right) }
                 }

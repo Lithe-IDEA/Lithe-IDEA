@@ -16,8 +16,7 @@ final class MacPluginMarketplaceService: PluginMarketplaceServicing {
     /// Lithe Store, the community index preset for every user. It is an
     /// ordinary third-party source: community trust, removable.
     static let communityRepository = "https://github.com/Lithe-IDEA/Lithe-store"
-    static let communityIndexURL =
-        "https://raw.githubusercontent.com/Lithe-IDEA/Lithe-store/HEAD/lithe-plugin-index.json"
+    static let communityIndexURL = PluginMarketplaceSource.communityIndexURL
     private static let maximumIndexBytes: Int64 = 5 * 1_048_576
     private static let sourcesSchemaVersion = 1
 
@@ -101,9 +100,15 @@ final class MacPluginMarketplaceService: PluginMarketplaceServicing {
         official.isEnabled = file.sources.first { $0.id == official.id }?.isEnabled ?? true
         let presetIDs: Set<String> = [official.id, community.id]
         let thirdParty = file.sources.filter { !presetIDs.contains($0.id) && $0.kind == .thirdParty }
+        // Lithe Store added by hand before it became a preset already has the
+        // preset ID, so only its enabled state carries over.
         if let saved = file.sources.first(where: { $0.id == community.id }) {
             community.isEnabled = saved.isEnabled
         } else if file.removedPresetSourceIDs?.contains(community.id) == true {
+            return [official] + thirdParty
+        } else if thirdParty.contains(where: { PluginMarketplaceSource.sameIndex($0.indexURL, community.indexURL) }) {
+            // Added by hand under a differently cased address: that entry
+            // stands in for the preset, keeping the ID its plugins recorded.
             return [official] + thirdParty
         }
         return [official, community] + thirdParty

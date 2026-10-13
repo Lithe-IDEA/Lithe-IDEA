@@ -284,6 +284,55 @@ struct PluginMarketplaceServiceTests {
         #expect(service.loadSources().map(\.id) == [PluginMarketplaceSource.officialID, PluginMarketplaceSource.communityID])
     }
 
+    /// A sources file from a release without the preset where the user added
+    /// Lithe Store by hand: it stays one source with the user's enabled state
+    /// and the ID its installed plugins recorded.
+    @Test
+    func litheStoreAddedByHandBeforeThePresetIsNotDuplicated() throws {
+        let root = PluginMarketplaceTestSupport.temporaryRoot("legacy-preset-sources")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = MacPluginMarketplaceService(
+            evaluator: PluginMarketplaceTestSupport.evaluator,
+            packageStore: MacPluginPackageStore(rootURL: root, validator: DeclarativePluginTestSupport.operations),
+            downloader: MacPluginPackageDownloader(transport: PluginMarketplaceTestSupport.LocalFileTransport(files: [:])),
+            transport: PluginMarketplaceTestSupport.LocalFileTransport(files: [:]),
+            applicationSupportDirectory: root,
+            cacheDirectory: root,
+            bundledOfficialIndexURL: nil
+        )
+        let sourcesURL = root.appendingPathComponent("Lithe/PluginMarketplace/sources.json")
+        try FileManager.default.createDirectory(at: sourcesURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        func writeLegacySources(_ input: String) throws -> PluginMarketplaceSource {
+            let resolution = try service.resolveSource(input)
+            let manual = PluginMarketplaceSource(
+                id: PluginMarketplaceSource.id(forIndexURL: resolution.indexURL),
+                name: resolution.displayName,
+                input: input,
+                indexURL: resolution.indexURL,
+                repository: resolution.repository,
+                isEnabled: false
+            )
+            try JSONEncoder().encode(LegacySourcesFile(schemaVersion: 1, sources: [manual])).write(to: sourcesURL)
+            return manual
+        }
+
+        let manual = try writeLegacySources("https://github.com/Lithe-IDEA/Lithe-store")
+        #expect(manual.id == PluginMarketplaceSource.communityID)
+        let loaded = service.loadSources()
+        #expect(loaded.map(\.id) == [PluginMarketplaceSource.officialID, PluginMarketplaceSource.communityID])
+        #expect(loaded.last?.isEnabled == false)
+
+        let lowercased = try writeLegacySources("https://github.com/lithe-idea/lithe-store")
+        #expect(lowercased.id != PluginMarketplaceSource.communityID)
+        #expect(service.loadSources().map(\.id) == [PluginMarketplaceSource.officialID, lowercased.id])
+        #expect(service.loadSources().last?.isEnabled == false)
+    }
+
+    private struct LegacySourcesFile: Encodable {
+        let schemaVersion: Int
+        let sources: [PluginMarketplaceSource]
+    }
+
     /// The description follows the app's interface language, including a
     /// region-qualified locale, and falls back to the default text.
     @Test

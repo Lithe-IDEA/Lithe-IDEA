@@ -59,6 +59,8 @@ Lithe 的插件管理改成和 IntelliJ IDEA 一样的“插件市场 / 已安�
 
 **预置社区源。** Lithe Store 是官方维护的社区插件索引，随 Lithe 预置，免得用户第一次打开插件市场时要先找源地址。它在信任上与用户手动添加的第三方源完全相同：插件显示为“社区”、不能用 `dev.lithe.*`、安装前必须确认。用户删除后，`sources.json` 的 `removedPresetSourceIDs` 记住这次删除，下次启动不会再加回来；用户停用只改变启用状态。
 
+**预置源的 ID。** 已安装插件只记录来源 ID（`PluginMarketplaceProvenance.sourceID`），更新、重装和“来自其他源”判断都按 ID 匹配。因此 Lithe Store 的 ID 不用固定字符串，而用与手动添加相同的规则从索引 URL 派生（`PluginMarketplaceSource.id(forIndexURL:)`）：无论是预置的、在没有预置的旧版本里手动添加的，还是删除后重新添加的，ID 都一样，插件不会因此找不到来源。GitHub 的 owner/仓库名不区分大小写：重新添加时，大小写不同的同一索引地址会取回预置 ID；旧版本按其他大小写手动添加的记录则保留原 ID 和启用状态，并代替预置源，不再额外插入一份。
+
 正确做法：Store 的收录、校验、版本追踪规则写在 Lithe-store 仓库的 `docs/`，主仓库只保存源地址常量。
 
 不要这样做：把 Lithe Store 当成官方源，或者为了“推荐”而给它的插件更高的信任。

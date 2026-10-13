@@ -57,7 +57,7 @@ final class EditorTabDragPreviewStore {
                     if case .terminal = $0.key { return false }
                     let point = view.convert(event.locationInWindow, from: nil)
                     // Leave the close-button slot to the existing button, including inactive tabs.
-                    return view.bounds.contains(point) && point.x < view.bounds.maxX - 24
+                    return !view.isHiddenOrHasHiddenAncestor && view.bounds.intersection(view.visibleRect).contains(point) && point.x < view.bounds.maxX - 24
                 }), let view = entry.value.view, let frame = entry.value.frame?() else { return event }
                 let local = view.convert(event.locationInWindow, from: nil)
                 self.pressed = (entry.key, event.locationInWindow,
@@ -78,7 +78,8 @@ final class EditorTabDragPreviewStore {
             }
             self.pressed = nil
             guard self.isMouseDragging else {
-                if let view = anchor.view, view.bounds.contains(view.convert(event.locationInWindow, from: nil)) {
+                if let view = anchor.view, !view.isHiddenOrHasHiddenAncestor,
+                   view.bounds.intersection(view.visibleRect).contains(view.convert(event.locationInWindow, from: nil)) {
                     anchor.clicked?()
                 }
                 return nil

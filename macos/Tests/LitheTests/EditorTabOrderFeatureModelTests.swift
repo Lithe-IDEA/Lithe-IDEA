@@ -8,6 +8,112 @@ import Testing
 @Suite("Editor tab order")
 @MainActor
 struct EditorTabOrderFeatureModelTests {
+    @Test(arguments: [2, 3])
+    func nativeMultilineRowReleaseReordersWithoutSplitting(row: Int) async throws {
+        let store = EditorTabOrderTestStore()
+        let settings = AppSettings(store: store)
+        settings.editorTabLayoutMode = .multipleRows
+        let model = AppModel(settings: settings, services: MacServiceContainer(
+            store: store, settings: settings, moduleLaunchMode: .safeMode).services)
+        for index in 1...3 {
+            model.documentFeature.openVirtualDocument(
+                URL(string: "lithe-test://rows/LongDocumentNameForWrapping\(index).swift")!, text: "row", displayPath: nil)
+        }
+        do {
+            let drag = EditorGroupDragState()
+            let original = model.editorTabItems
+            let host = NSHostingView(rootView: EditorGroupContainer(feature: model.editorTabOrderFeature, drag: drag)
+                .environmentObject(model).environmentObject(settings).environmentObject(model.editorChrome))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 400),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host
+            defer { window.contentView = nil; window.close() }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            repeat {
+                host.layoutSubtreeIfNeeded()
+                if let frame = drag.tabFrames.values.first, frame.height > 72 { break }
+                await Task.yield()
+            } while ContinuousClock.now < deadline
+            let frame = try #require(drag.tabFrames.values.first)
+            #expect(frame.height > 72)
+            func send(_ type: NSEvent.EventType, y: CGFloat, x: CGFloat) throws {
+                NSApp.sendEvent(try #require(NSEvent.mouseEvent(with: type,
+                    location: host.convert(CGPoint(x: x, y: y), to: nil), modifierFlags: [], timestamp: 0,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                    pressure: type == .leftMouseUp ? 0 : 1)))
+            }
+            let rowHeight = frame.height / 3
+            try send(.leftMouseDown, y: rowHeight / 2, x: 60)
+            try send(.leftMouseDragged, y: rowHeight / 2, x: 80)
+            await Task.yield(); host.layoutSubtreeIfNeeded()
+            try send(.leftMouseDragged, y: (CGFloat(row) - 0.5) * rowHeight, x: 240)
+            await Task.yield(); host.layoutSubtreeIfNeeded()
+            try send(.leftMouseUp, y: (CGFloat(row) - 0.5) * rowHeight, x: 240)
+            host.layoutSubtreeIfNeeded()
+            #expect(model.editorTabOrderFeature.groupLayout.groups.count == 1)
+            #expect(model.editorTabItems != original)
+            #expect(Set(model.editorTabItems) == Set(original))
+        } catch { await model.shutdownProjectSession(); throw error }
+        await model.shutdownProjectSession()
+    }
+
+    @Test func clippedTabsDoNotCaptureAdjacentGroupClicks() throws {
+        let hiddenStore = EditorTabDragPreviewStore(), neighborStore = EditorTabDragPreviewStore()
+        defer { hiddenStore.stopCapturing(); neighborStore.stopCapturing() }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 60),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.contentView = nil; window.close() }
+        let root = try #require(window.contentView)
+        let clip = NSClipView(frame: CGRect(x: 0, y: 0, width: 100, height: 36))
+        let document = NSView(frame: CGRect(x: 0, y: 0, width: 300, height: 36))
+        clip.documentView = document; root.addSubview(clip)
+        let hidden = NSView(frame: CGRect(x: 120, y: 0, width: 80, height: 36))
+        document.addSubview(hidden)
+        let neighbor = NSView(frame: hidden.frame); root.addSubview(neighbor)
+        var hiddenClicks = 0, neighborClicks = 0, hiddenDrags = 0
+        hiddenStore.register(hidden, for: .document(UUID()), frame: { hidden.frame },
+            clicked: { hiddenClicks += 1 }, changed: { _, _ in hiddenDrags += 1 }, ended: { _, _ in })
+        func send(_ type: NSEvent.EventType, x: CGFloat) throws {
+            NSApp.sendEvent(try #require(NSEvent.mouseEvent(with: type, location: CGPoint(x: x, y: 18),
+                modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)))
+        }
+        #expect(hidden.bounds.intersection(hidden.visibleRect).isEmpty)
+        try send(.leftMouseDown, x: 140); try send(.leftMouseUp, x: 140)
+        #expect(hiddenClicks == 0)
+        neighborStore.register(neighbor, for: .document(UUID()), frame: { neighbor.frame },
+            clicked: { neighborClicks += 1 }, changed: { _, _ in }, ended: { _, _ in })
+        try send(.leftMouseDown, x: 140); try send(.leftMouseUp, x: 140)
+        #expect(hiddenClicks == 0); #expect(neighborClicks == 1)
+        try send(.leftMouseDown, x: 140); try send(.leftMouseDragged, x: 155); try send(.leftMouseUp, x: 155)
+        #expect(hiddenDrags == 0)
+        // A partially visible tab remains clickable only inside the viewport.
+        hidden.frame.origin.x = 80
+        try send(.leftMouseDown, x: 90); try send(.leftMouseUp, x: 90)
+        #expect(hiddenClicks == 1)
+        try send(.leftMouseDown, x: 105); try send(.leftMouseUp, x: 105)
+        #expect(hiddenClicks == 1)
+    }
+
+    @Test(arguments: [CGFloat(58), 94])
+    func multilineTabRowsRemainReorderTargets(y: CGFloat) throws {
+        let feature = EditorTabOrderFeatureModel()
+        let a = EditorTabItem.document(UUID()), b = EditorTabItem.document(UUID())
+        feature.moveToEnd(a); feature.moveToEnd(b)
+        let group = try #require(feature.groupLayout.groups.first)
+        let drag = EditorGroupDragState()
+        drag.frames = [group: CGRect(x: 0, y: 0, width: 300, height: 400)]
+        drag.tabFrames = [group: CGRect(x: 0, y: 0, width: 300, height: 108)]
+        drag.begin(); defer { drag.finish() }
+        #expect(drag.destination(at: CGPoint(x: 150, y: y), sourceGroup: group) == nil)
+        #expect(feature.move(b, before: a))
+        #expect(feature.groupLayout.groups == [group])
+        #expect(feature.items == [b, a])
+        #expect(drag.destination(at: CGPoint(x: 150, y: 120), sourceGroup: group)?.side == .top)
+        #expect(drag.destination(at: CGPoint(x: 290, y: 250), sourceGroup: group)?.side == .right)
+    }
+
     @Test func databaseTabsKeepTheirSharedWorkspaceWhileDocumentsSplit() throws {
         let feature = EditorTabOrderFeatureModel()
         let first = EditorTabItem.document(UUID()), second = EditorTabItem.document(UUID())

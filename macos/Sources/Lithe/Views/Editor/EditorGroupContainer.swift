@@ -10,21 +10,24 @@ final class EditorGroupDragState: ObservableObject {
         let frame: CGRect
     }
     var frames: [UUID: CGRect] = [:]
+    var tabFrames: [UUID: CGRect] = [:]
+    private var dragTabFrames: [UUID: CGRect] = [:]
     private var dragFrames: [UUID: CGRect] = [:]
     @Published var target: Target?
-    func begin() { dragFrames = frames; target = nil }
-    func finish() { target = nil; dragFrames = [:] }
+    func begin() { dragFrames = frames; dragTabFrames = tabFrames; target = nil }
+    func finish() { target = nil; dragFrames = [:]; dragTabFrames = [:] }
 
     func destination(at point: CGPoint, sourceGroup: UUID) -> Target? {
         guard let (group, fullFrame) = dragFrames.first(where: { $0.value.contains(point) }) else { return nil }
         // The tab strip remains a reorder/move target, never a split edge.
-        guard point.y > fullFrame.minY + 36 else {
+        guard let tabFrame = dragTabFrames[group] else { return nil }
+        guard point.y > tabFrame.maxY else {
             return group == sourceGroup ? nil : .init(group: group, side: .center, frame: fullFrame)
         }
-        let frame = CGRect(x: fullFrame.minX, y: fullFrame.minY + 36, width: fullFrame.width, height: max(0, fullFrame.height - 36))
+        let frame = CGRect(x: fullFrame.minX, y: tabFrame.maxY, width: fullFrame.width, height: max(0, fullFrame.maxY - tabFrame.maxY))
         guard frame.width > 0, frame.height > 0 else { return nil }
-        let x = (point.x - fullFrame.minX) / fullFrame.width
-        let y = (point.y - fullFrame.minY) / fullFrame.height
+        let x = (point.x - frame.minX) / frame.width
+        let y = (point.y - frame.minY) / frame.height
         let edges: [(EditorGroupDropSide, CGFloat)] = [(.right, 1 - x), (.left, x), (.bottom, 1 - y), (.top, y)]
         guard let nearest = edges.min(by: { $0.1 < $1.1 }) else { return nil }
         // TabsUtil trapezoids: normalized nearest edge, Registry dragToSplitRatio = 0.2.
@@ -49,6 +52,7 @@ struct EditorGroupContainer: View {
         pane(feature.groupLayout)
             .coordinateSpace(name: editorWorkspaceCoordinateSpaceName)
             .onPreferenceChange(EditorGroupFramePreference.self) { drag.frames = $0 }
+            .onPreferenceChange(EditorGroupTabFramePreference.self) { drag.tabFrames = $0 }
             .overlay(alignment: .topLeading) {
                 if let target = drag.target {
                     Rectangle().fill(LitheTheme.editorTabDropBackground)
@@ -93,6 +97,13 @@ private struct EditorGroupSplit: View {
 }
 
 private struct EditorGroupFramePreference: PreferenceKey {
+    static let defaultValue: [UUID: CGRect] = [:]
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+    }
+}
+
+struct EditorGroupTabFramePreference: PreferenceKey {
     static let defaultValue: [UUID: CGRect] = [:]
     static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
         value.merge(nextValue(), uniquingKeysWith: { _, next in next })

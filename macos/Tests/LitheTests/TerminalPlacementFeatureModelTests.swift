@@ -7,6 +7,38 @@ import Testing
 @Suite("Terminal tab placement")
 @MainActor
 struct TerminalPlacementFeatureModelTests {
+    @Test(arguments: [false, true])
+    func documentFocusRestoresSelectionAfterTerminalOrDatabase(database: Bool) async throws {
+        let context = makeTerminalCloseContext()
+        let model = context.model
+        do {
+            model.documentFeature.openVirtualDocument(URL(string: "lithe-test://focus/A.swift")!, text: "A", displayPath: nil)
+            let document = try #require(model.openDocuments.first)
+            model.selectEditorDocument(document)
+            let group = try #require(model.editorTabOrderFeature.groupLayout.groups.first)
+            model.editorTabOrderFeature.moveToEnd(.terminal(context.session.id))
+            #expect(model.editorTabOrderFeature.drop(.terminal(context.session.id), into: group, side: .right))
+            model.selectEditorTerminalSession(context.session)
+            if database {
+                model.editorTabOrderFeature.moveToEnd(.database(nil))
+                model.editorTabOrderFeature.databaseSelected = true
+                model.editorTabOrderFeature.focus(.database(nil))
+            }
+            #expect(model.activeDocumentID == document.id)
+            model.editorDidFocus(document)
+            #expect(model.activeEditorTerminalSession == nil)
+            #expect(!model.isDatabaseWorkspaceSelected)
+            #expect(model.editorTabOrderFeature.selectedItem(in: group) == .document(document.id))
+            model.showFindBar()
+            #expect(model.isFindBarVisible)
+            #expect(model.requestCloseActiveWorkbenchItem())
+            #expect(!model.openDocuments.contains { $0.id == document.id })
+            #expect(model.editorTerminalSessions.contains { $0.id == context.session.id })
+            if database { #expect(model.editorTabItems.contains(.database(nil))) }
+        } catch { await model.shutdownProjectSession(); throw error }
+        await model.shutdownProjectSession()
+    }
+
     @Test
     func reordersTerminalToolTabs() {
         let model = TerminalPlacementFeatureModel()

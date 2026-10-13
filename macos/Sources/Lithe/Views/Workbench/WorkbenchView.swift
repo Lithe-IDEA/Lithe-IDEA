@@ -770,6 +770,8 @@ struct WorkbenchView: View {
                     stopExecutionButton
                 }
             }
+            activityToolButton(ideaAssetPath: "expui/general/settings@20x20.svg", help: "Settings", tooltipPlacement: .below,
+                               isSelected: model.workbenchFeature.isSettingsPresented) { model.showSettings() }
         }
         .padding(.leading, WorkbenchTopBarMetrics.leadingInset)
         .padding(.trailing, 10)
@@ -1103,8 +1105,6 @@ struct WorkbenchView: View {
             Spacer(minLength: 0)
             dockStripe(DockPosition(anchor: .left, group: .secondary))
             dockStripe(DockPosition(anchor: .bottom, group: .primary))
-            activityToolButton(ideaAssetPath: "expui/general/settings@20x20.svg", help: "Settings",
-                               isSelected: model.workbenchFeature.isSettingsPresented) { model.showSettings() }
         }
         .frame(width: ActivityBarMetrics.width)
         .background(frameChromeBackground)

@@ -1171,6 +1171,12 @@ struct EditorAreaView: View {
     private var editorWorkspace: some View {
         VStack(spacing: 0) {
             editorTabs
+                .background(GeometryReader { geometry in
+                    if let groupID {
+                        Color.clear.preference(key: EditorGroupTabFramePreference.self,
+                            value: [groupID: geometry.frame(in: .named(editorWorkspaceCoordinateSpaceName))])
+                    }
+                })
             LitheToolWindowHeaderDivider()
 
             if let item = paneItem, item.isDatabaseTab, let feature = model.databaseFeatureIfActive {

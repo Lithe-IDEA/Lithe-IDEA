@@ -11,6 +11,8 @@ pub mod cli_update;
 mod codex_retry;
 pub mod environment;
 pub mod install;
+mod model_calls;
+mod model_proxy;
 mod prompt;
 mod prompt_retry;
 mod session_defaults;
@@ -18,6 +20,7 @@ mod session_routing;
 mod subscription;
 
 pub use catalog::{ModelDelivery, ProviderProtocol};
+pub use model_calls::{ContextComposition, ModelApi, ModelCall, ModelCallUsage};
 pub use prompt::PromptFile;
 
 use std::collections::{HashMap, VecDeque};
@@ -79,6 +82,10 @@ pub struct AgentLaunch {
     #[serde(default)]
     pub authentication: AgentAuthentication,
     pub provider: Option<ProviderCredentials>,
+    /// Route API-key provider traffic through the loopback observation proxy
+    /// and emit `modelCall` events. Ignored for subscription connections.
+    #[serde(default)]
+    pub observe_model_calls: bool,
 }
 
 /// Subscription access is explicit and limited to the installed Codex adapter.
@@ -452,6 +459,13 @@ pub enum AgentEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         max_attempts: Option<u32>,
     },
+    /// One provider request observed by the opt-in loopback proxy. `sessionId`
+    /// is absent when no prompt, or more than one, was running at its start.
+    ModelCall {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+        call: model_calls::ModelCall,
+    },
     /// The agent acknowledged the prompt's completion, including cancellation.
     TurnFinished {
         session_id: String,
@@ -703,10 +717,32 @@ async fn run_agent(
     emit: Emit,
 ) -> Result<(), String> {
     let cancelled = || stop_requested.load(Ordering::Acquire);
+    let observe_model_calls = launch.observe_model_calls;
     let mut launch = resolve_with_cancel(launch, &cancelled)?;
     if cancelled() {
         return Err("Agent launch was cancelled".into());
     }
+    let turns: RunningTurns = Arc::new(Mutex::new(HashMap::new()));
+    let _model_calls = match launch.gateway.as_mut().filter(|_| observe_model_calls) {
+        Some(route) => {
+            let running = turns.clone();
+            let session: model_proxy::SessionResolver =
+                Arc::new(move || sole_running_session(&running));
+            let calls = emit.clone();
+            let sink: model_proxy::CallSink =
+                Arc::new(move |session_id, call| calls(AgentEvent::ModelCall { session_id, call }));
+            // Statistics are optional. A proxy that cannot start leaves the
+            // configured endpoint in place rather than blocking the Agent.
+            match model_proxy::start(&route.base_url, session, sink).await {
+                Ok(proxy) => {
+                    route.base_url = proxy.base_url().to_owned();
+                    Some(proxy)
+                }
+                Err(_) => None,
+            }
+        }
+        None => None,
+    };
     let _relay = if launch
         .gateway
         .as_ref()
@@ -787,6 +823,7 @@ async fn run_agent(
         launch.subscription_cli,
         controls,
         permissions,
+        turns,
         emit,
     )
     .await;
@@ -807,6 +844,17 @@ async fn run_agent(
             None => message,
         }
     })
+}
+
+/// Provider requests carry no ACP session id. Attribute a model call only
+/// when exactly one non-cancelling prompt can have caused it.
+fn sole_running_session(turns: &RunningTurns) -> Option<String> {
+    let turns = turns.lock().ok()?;
+    let mut active = turns.iter().filter(|(_, turn)| !turn.cancelling);
+    match (active.next(), active.next()) {
+        (Some((session_id, _)), None) => Some(session_id.clone()),
+        _ => None,
+    }
 }
 
 /// Ask the whole agent tree to exit, then force-kill whatever is left.
@@ -867,6 +915,7 @@ async fn run_connection<OB, IB>(
     subscription_cli: Option<PathBuf>,
     mut controls: async_mpsc::UnboundedReceiver<Control>,
     permissions: PendingPermissions,
+    turns: RunningTurns,
     emit: Emit,
 ) -> Result<(), String>
 where
@@ -875,7 +924,6 @@ where
 {
     let session_meta = session_routing::metadata(gateway.as_ref())?;
     let (auth_tx, mut auth_rx) = tokio::sync::watch::channel(None::<subscription::AuthStatus>);
-    let turns: RunningTurns = Arc::new(Mutex::new(HashMap::new()));
     let updates = emit.clone();
     let update_turns = turns.clone();
     let requests = emit.clone();

@@ -58,6 +58,7 @@ fn custom_launch(command: &str, provider: ProviderCredentials) -> AgentLaunch {
         data_directory: None,
         provider: Some(provider),
         authentication: AgentAuthentication::ApiKey,
+        observe_model_calls: false,
     }
 }
 
@@ -150,6 +151,7 @@ impl Harness {
             subscription.then(|| PathBuf::from("/fixture/codex")),
             receiver,
             permissions.clone(),
+            Arc::new(Mutex::new(HashMap::new())),
             Arc::new(move |event| {
                 let _ = event_tx.send(event);
             }),
@@ -2397,6 +2399,7 @@ fn catalog_agents_resolve_to_their_install_and_key_delivery() {
         data_directory: Some(data.clone()),
         provider: Some(provider),
         authentication: AgentAuthentication::ApiKey,
+        observe_model_calls: false,
     };
     let anthropic = ProviderCredentials {
         protocol: ProviderProtocol::AnthropicMessages,
@@ -2821,4 +2824,63 @@ async fn subscription_login_deadline_does_not_leave_a_waiting_connection() {
         .expect("bounded login deadline")
         .unwrap();
     assert!(result.unwrap_err().contains("sign-in timed out"));
+}
+
+#[test]
+fn model_calls_are_attributed_only_to_a_sole_running_prompt() {
+    let turns: RunningTurns = Arc::new(Mutex::new(HashMap::new()));
+    let turn = |cancelling| RunningTurn {
+        generation: 1,
+        cancelling,
+        retry: tokio::sync::watch::channel(prompt_retry::State::new(false)).0,
+    };
+    assert_eq!(sole_running_session(&turns), None);
+    turns
+        .lock()
+        .unwrap()
+        .insert("session-1".into(), turn(false));
+    assert_eq!(sole_running_session(&turns).as_deref(), Some("session-1"));
+    // A cancelling turn can still issue requests, but they are not attributed.
+    turns.lock().unwrap().insert("session-2".into(), turn(true));
+    assert_eq!(sole_running_session(&turns).as_deref(), Some("session-1"));
+    // Concurrent prompts make a provider request ambiguous.
+    turns
+        .lock()
+        .unwrap()
+        .insert("session-3".into(), turn(false));
+    assert_eq!(sole_running_session(&turns), None);
+}
+
+#[test]
+fn model_call_events_use_the_fixture_shape() {
+    let expected = fixture()["events"]["modelCall"].clone();
+    let call: ModelCall = ModelCall {
+        api: ModelApi::AnthropicMessages,
+        model: Some("claude-sonnet".into()),
+        status: 200,
+        streaming: true,
+        first_token_ms: Some(820),
+        duration_ms: 6400,
+        usage: Some(ModelCallUsage {
+            input_tokens: 1200,
+            cache_read_tokens: 42000,
+            cache_write_tokens: 800,
+            output_tokens: 640,
+            reasoning_tokens: None,
+        }),
+        context: Some(ContextComposition {
+            system_prompt_tokens: 4500,
+            tool_tokens: 3500,
+            mcp_tool_tokens: 14000,
+            message_tokens: 22000,
+            tool_count: 18,
+            mcp_tool_count: 40,
+            scaled_to_usage: true,
+        }),
+    };
+    let event = AgentEvent::ModelCall {
+        session_id: Some("session-1".into()),
+        call,
+    };
+    assert_eq!(serde_json::to_value(event).unwrap(), expected);
 }

@@ -125,6 +125,18 @@ fn respond(stream: &mut TcpStream, status: u16, long: bool, partial: bool) -> bo
 }
 
 fn run(status: u16, long: bool, recover: bool, partial: bool, cancel: bool, mixed: bool) {
+    run_with(status, long, recover, partial, cancel, mixed, false);
+}
+
+fn run_with(
+    status: u16,
+    long: bool,
+    recover: bool,
+    partial: bool,
+    cancel: bool,
+    mixed: bool,
+    observe_model_calls: bool,
+) {
     assert!(
         std::env::var_os("CODEX_HOME").is_some(),
         "isolate native Codex state"
@@ -145,6 +157,7 @@ fn run(status: u16, long: bool, recover: bool, partial: bool, cancel: bool, mixe
                 std::env::var_os("LITHE_ACP_E2E_DATA_DIR").expect("existing adapter installation"),
             )),
             authentication: AgentAuthentication::ApiKey,
+            observe_model_calls,
             provider: Some(ProviderCredentials {
                 protocol: ProviderProtocol::Responses,
                 base_url: format!("http://{}/v1", listener.local_addr().unwrap()),
@@ -165,6 +178,7 @@ fn run(status: u16, long: bool, recover: bool, partial: bool, cancel: bool, mixe
     let mut attempts = Vec::new();
     let mut reply = String::new();
     let mut session = None;
+    let mut model_calls = Vec::new();
     let success = (status == 200 && !partial) || recover || cancel;
     loop {
         // HTTP acceptance and host events expose separate native wait objects.
@@ -277,11 +291,40 @@ fn run(status: u16, long: bool, recover: bool, partial: bool, cancel: bool, mixe
                 assert_eq!(attempts, if recover || cancel { vec![2] } else { vec![] });
                 break;
             }
+            AgentEvent::ModelCall { session_id, call } => model_calls.push((session_id, call)),
             AgentEvent::Stopped { message } => panic!("Codex stopped unexpectedly: {message:?}"),
             _ => {}
         }
     }
+    if observe_model_calls {
+        // A call is reported when its response stream ends; drain any event
+        // racing the prompt response under the same deadline.
+        while !model_calls.iter().any(|(_, call)| call.usage.is_some()) && Instant::now() < deadline
+        {
+            if let Ok(AgentEvent::ModelCall { session_id, call }) =
+                events.recv_timeout(Duration::from_millis(10))
+            {
+                model_calls.push((session_id, call));
+            }
+        }
+        let (session_id, call) = model_calls
+            .iter()
+            .find(|(_, call)| call.usage.is_some())
+            .expect("the proxied Responses request is observed");
+        assert_eq!(session_id, &session);
+        assert!(call.streaming && call.first_token_ms.is_some());
+        assert_eq!(call.usage.map(|usage| usage.output_tokens), Some(1));
+        assert!(call.context.is_some_and(|context| context.tool_count > 0));
+    } else {
+        assert!(model_calls.is_empty(), "no observation without the opt-in");
+    }
     drop(handle);
+}
+
+#[test]
+#[ignore = "requires installed Codex ACP/CLI and isolated CODEX_HOME; local HTTP only"]
+fn codex_turn_through_the_model_call_proxy_is_observed() {
+    run_with(200, false, false, false, false, false, true);
 }
 
 macro_rules! local_case {

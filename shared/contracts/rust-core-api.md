@@ -309,6 +309,25 @@ session delta or billing amount, because the adapters' accounting scopes differ.
 They must not derive these counters from context occupancy or subscription quota.
 `acp-events-v1.json` covers completion both with and without usage.
 
+The launch JSON's optional `observeModelCalls` (default `false`) asks the host to
+start a loopback proxy for API-key gateway connections and hand the Agent
+`http://127.0.0.1:<port>/lithe-<token>` instead of the configured endpoint.
+Requests and responses are forwarded unchanged; subscription connections and
+a proxy that fails to start keep the configured endpoint. Each generation request
+(`.../messages`, `.../responses`, `.../chat/completions`) then produces one
+`modelCall` event with `call.api`, optional `model`, HTTP `status`, `streaming`,
+optional `firstTokenMs`, `durationMs`, optional provider `usage`
+(`inputTokens` excluding cache, `cacheReadTokens`, `cacheWriteTokens`,
+`outputTokens`, optional `reasoningTokens`) and optional estimated prompt
+`context` (`systemPromptTokens`, `toolTokens`, `mcpToolTokens`, `messageTokens`,
+`toolCount`, `mcpToolCount`, `scaledToUsage`). `sessionId` is present only when
+exactly one non-cancelling prompt was running when the request started; consumers
+drop unattributed calls instead of guessing. Unparsable provider data omits the
+optional fields and never affects forwarding. Without these events, consumers do
+not estimate model-call counts, first-token latency, output speed or prompt
+composition. Decision:
+`.agents/notes/implemented/architecture/2026-10-13-agent-model-call-observation.md`.
+
 macOS keeps local turn statistics in memory. Elapsed time uses a monotonic clock
 from user submission (including queued session creation/loading, tools and
 permission waits) until completion, request failure or disconnect. Cancellation

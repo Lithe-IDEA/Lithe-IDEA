@@ -19,6 +19,7 @@ struct AgentComposerView: View {
     var isConfiguring = false
     var isCancelling = false
     var contextUsage: AgentContextUsage?
+    var sessionStatistics: AgentSessionStatistics?
     var showsSubscriptionQuota = false
     var subscriptionQuota: AgentSubscriptionQuota?
     var subscriptionAccount: String?
@@ -85,7 +86,11 @@ struct AgentComposerView: View {
 
     private var contextBar: some View {
         HStack(spacing: 8) {
-            AgentContextUsageView(usage: contextUsage)
+            if let sessionStatistics {
+                AgentSessionStatusView(statistics: sessionStatistics, contextUsage: contextUsage)
+            } else {
+                AgentContextUsageView(usage: contextUsage)
+            }
             Rectangle().fill(AgentPanelStyle.border).frame(width: 1, height: 12)
             Button { showsFilePicker = true } label: {
                 Label(isDropTargeted ? "Drop files here" : "Attach files", systemImage: "paperclip")

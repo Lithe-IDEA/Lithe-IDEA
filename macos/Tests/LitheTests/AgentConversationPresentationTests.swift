@@ -417,6 +417,40 @@ struct AgentConversationPresentationTests {
     }
 
     @Test
+    func sessionStatusHidesProxyOnlyFactsAndCardsFitBothAppearances() throws {
+        let locale = Locale(identifier: "en_US")
+        #expect(AgentSessionStatusPresentation.compactTokens(999, locale: locale) == "999")
+        #expect(AgentSessionStatusPresentation.compactTokens(43_600, locale: locale) == "43.6K")
+        #expect(AgentSessionStatusPresentation.compactTokens(3_685_001, locale: locale) == "3.7M")
+        var conversation = AgentConversation()
+        conversation.completedTurns = [AgentTurnStatistics(id: "turn", startedAt: .now)]
+        // Without proxy observations, steps and speed are absent rather than estimated.
+        #expect(AgentSessionStatusPresentation.summary(conversation.sessionStatistics, locale: locale) == "1 turns")
+        let call = try #require(AgentModelCall.parse([
+            "api": "anthropicMessages", "status": 200, "streaming": true, "firstTokenMs": 500, "durationMs": 2500,
+            "usage": ["inputTokens": 100, "cacheReadTokens": 900, "cacheWriteTokens": 0, "outputTokens": 400],
+            "context": ["systemPromptTokens": 100, "toolTokens": 200, "mcpToolTokens": 300, "messageTokens": 400,
+                        "toolCount": 3, "mcpToolCount": 2, "scaledToUsage": true]
+        ]))
+        conversation.recordModelCall(call)
+        let statistics = conversation.sessionStatistics
+        #expect(AgentSessionStatusPresentation.summary(statistics, locale: locale) == "1 turns 1 steps · 200 tok/s")
+        #expect(AgentSessionStatusPresentation.tokenSummary(try #require(statistics.tokens), locale: locale) == "1.4K tok · Cache hit 90%")
+        let usage = try #require(AgentContextUsage(usedTokens: 1_000, capacityTokens: 200_000))
+        for scheme in [ColorScheme.dark, .light] {
+            for card in [AnyView(AgentSessionSummaryCard(statistics: statistics)),
+                         AnyView(AgentTokenUsageCard(tokens: try #require(statistics.tokens))),
+                         AnyView(AgentContextUsageCard(usage: usage, composition: statistics.modelCalls?.latestContext)),
+                         AnyView(AgentContextUsageCard(usage: nil, composition: nil))] {
+                let host = NSHostingView(rootView: card.environment(\.colorScheme, scheme).environment(\.locale, locale))
+                let size = host.fittingSize
+                #expect(size.width == AgentStatusCardMetrics.width, "Cards keep the shared width")
+                #expect(size.height > 40 && size.height < 400, "Cards wrap footnotes without clipping")
+            }
+        }
+    }
+
+    @Test
     func contextIndicatorUsesZeroPlaceholderAndReportedCountsWhenInUse() throws {
         let locale = Locale(identifier: "en_US")
         let usage = try #require(AgentContextUsage(usedTokens: 18700, capacityTokens: 258400))

@@ -448,6 +448,59 @@ struct AgentConversationPresentationTests {
                 #expect(size.height > 40 && size.height < 400, "Cards wrap footnotes without clipping")
             }
         }
+        if let folder = ProcessInfo.processInfo.environment["LITHE_AGENT_STATUS_SCREENSHOTS"] {
+            try captureStatusScreenshots(folder: URL(fileURLWithPath: folder))
+        }
+    }
+
+    /// Opt-in visual review of the status bar and its cards in the review language.
+    private func captureStatusScreenshots(folder: URL) throws {
+        let locale = Locale(identifier: "en_US")
+        // A long session: 7 turns, 54 streamed calls with a large cached prompt.
+        var conversation = AgentConversation()
+        let start = ContinuousClock.Instant.now
+        conversation.completedTurns = (0..<7).map { index in
+            var turn = AgentTurnStatistics(id: "turn-\(index)", startedAt: start)
+            turn.setToolsRunning(true, at: start)
+            turn.setToolsRunning(false, at: start.advanced(by: .seconds(29)))
+            turn.finish(at: start.advanced(by: .seconds(87)), endingMessageID: "reply-\(index)", usage: nil, toolCallCount: 7)
+            return turn
+        }
+        for index in 0..<54 {
+            let call = try #require(AgentModelCall.parse([
+                "api": "anthropicMessages", "status": 200, "streaming": true,
+                "firstTokenMs": 900 + index * 4, "durationMs": 7400,
+                "usage": ["inputTokens": 1100, "cacheReadTokens": 65600, "cacheWriteTokens": 900, "outputTokens": 1500],
+                "context": ["systemPromptTokens": 4500, "toolTokens": 7500, "mcpToolTokens": 14000,
+                            "messageTokens": 85600 + index * 400, "toolCount": 18, "mcpToolCount": 40,
+                            "scaledToUsage": true]
+            ]))
+            conversation.recordModelCall(call)
+        }
+        let statistics = conversation.sessionStatistics
+        let usage = try #require(AgentContextUsage(usedTokens: 133_000, capacityTokens: 1_000_000))
+        let views: [(String, AnyView)] = [
+            ("bar", AnyView(AgentSessionStatusView(statistics: statistics, contextUsage: usage)
+                .font(LitheTheme.uiFont(size: 11)).foregroundStyle(AgentPanelStyle.secondary)
+                .padding(.horizontal, 10).frame(height: 26).background(AgentPanelStyle.context))),
+            ("session", AnyView(AgentSessionSummaryCard(statistics: statistics))),
+            ("tokens", AnyView(AgentTokenUsageCard(tokens: try #require(statistics.tokens)))),
+            ("context", AnyView(AgentContextUsageCard(usage: usage, composition: statistics.modelCalls?.latestContext))),
+            ("context-off", AnyView(AgentContextUsageCard(usage: usage, composition: nil))),
+        ]
+        for (name, view) in views {
+            for (theme, scheme) in [("dark", ColorScheme.dark), ("light", .light)] {
+                let host = NSHostingView(rootView: view.padding(12).background(AgentPanelStyle.canvas)
+                    .environment(\.colorScheme, scheme).environment(\.locale, locale))
+                host.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+                host.frame.size = host.fittingSize
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                try data.write(to: folder.appendingPathComponent("status-\(name)-\(theme).png"))
+            }
+        }
     }
 
     @Test

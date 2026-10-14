@@ -69,39 +69,32 @@ struct AgentActivitySummaryBar: View {
             self.restoration = nil
             panel = .edits
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, AgentComposerMetrics.horizontalInset)
         .padding(.bottom, 4)
     }
 
     private var tabs: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 4) {
             ForEach(Panel.allCases, id: \.self) { item in
-                if item != .tasks { Divider().frame(height: 14).overlay(AgentPanelStyle.border) }
                 Button { panel = panel == item ? nil : item } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: item.icon).font(LitheTheme.uiFont(size: 11))
+                    HStack(spacing: 2) {
+                        LitheSystemIcon(systemImage: item.icon, size: LitheTheme.Metrics.toolbarIconSize)
                         Text(item.title)
                         badge(item)
                     }
-                    .foregroundStyle(panel == item ? AgentPanelStyle.text : AgentPanelStyle.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 24)
-                    .background(panel == item ? AgentPanelStyle.context : Color.clear, in: RoundedRectangle(cornerRadius: 4))
-                    .contentShape(Rectangle())
+                    .padding(.horizontal, 4)
+                    .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.litheNoPress)
-                .litheRowHover()
+                .buttonStyle(LitheIconButtonStyle(size: LitheTheme.Metrics.toolbarIconButtonSize,
+                                                 isIconOnly: false, isSelected: panel == item))
                 .accessibilityIdentifier("agent-activity-\(item.rawValue)")
                 .accessibilityValue(count(item))
                 .accessibilityAddTraits(panel == item ? .isSelected : [])
                 .help(item.title)
             }
         }
-        .font(LitheTheme.uiFont(size: 11))
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
+        .font(LitheTheme.settingsFont)
         .frame(height: 32)
-        .background(AgentPanelStyle.canvas, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(AgentPanelStyle.border, lineWidth: 1))
     }
 
     private func count(_ panel: Panel) -> String {
@@ -117,7 +110,7 @@ struct AgentActivitySummaryBar: View {
     @ViewBuilder private func badge(_ item: Panel) -> some View {
         let count = count(item)
         if count != "0" {
-            Text(count).font(LitheTheme.uiFont(size: 10, weight: .semibold, design: .monospaced))
+            Text(count).font(LitheTheme.smallFont)
                 .foregroundStyle(item == .running && !activity.running.isEmpty ? LitheTheme.accent : AgentPanelStyle.text)
         }
     }
@@ -147,8 +140,7 @@ struct AgentActivityDetailsView: View {
             case .edits: edits
             }
             if let reviewError {
-                Text(reviewError).font(LitheTheme.uiFont(size: 11)).foregroundStyle(LitheTheme.error).textSelection(.enabled)
-                    .padding(8)
+                LitheBanner(status: .error) { Text(reviewError).textSelection(.enabled) }
             }
         }
         .frame(width: width)
@@ -209,13 +201,13 @@ struct AgentActivityDetailsView: View {
             if let deletions = change.deletions, deletions > 0 {
                 Text("-\(deletions)").foregroundStyle(LitheTheme.error)
             }
-            Button { onDiff(change) } label: { Image(systemName: "rectangle.split.2x1") }
-                .buttonStyle(.litheNoPress)
+            Button { onDiff(change) } label: { LitheSystemIcon(systemImage: "rectangle.split.2x1", size: LitheTheme.Metrics.toolbarIconSize) }
+                .litheToolbarIconButton()
                 .disabled(change.diffs.isEmpty)
                 .help("Show Agent diff")
                 .accessibilityIdentifier("agent-edits-diff-\(change.path)")
-            Button { onRequestRestore([change]) } label: { Image(systemName: "arrow.uturn.backward") }
-                .buttonStyle(.litheNoPress)
+            Button { onRequestRestore([change]) } label: { LitheSystemIcon(systemImage: "arrow.uturn.backward", size: LitheTheme.Metrics.toolbarIconSize) }
+                .litheToolbarIconButton()
                 .disabled(isResponding || isReviewing || !change.canRevert)
                 .help(change.canRevert ? "Roll back Agent changes" : "Original content is missing or incomplete.")
                 .accessibilityIdentifier("agent-edits-revert-\(change.path)")
